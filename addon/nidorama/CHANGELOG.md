@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.22.2
+- Fixed: "Make a plan from a paper sketch" on the welcome screen could not open the finished file.
+- The sample file saved for a sketch now carries notes explaining every part, so a home file can be written from it more reliably.
+- Home files may now contain comments and trailing commas, and furniture may be written in a short form (kind, position, turn).
+
 ## 0.22.1
 - No GitHub sign-in in the app: requests and votes are made on GitHub, and updates need nothing.
 

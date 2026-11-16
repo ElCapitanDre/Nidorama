@@ -160,3 +160,37 @@ export function buildSample() {
   home.levels.push(site);
   return home;
 }
+
+/** The sample with notes for whoever writes a home file from it, such as a chat assistant working from a sketch.
+ *  Notes are keys starting with _; the app leaves them out when it reads a file. */
+export function guideSample() {
+  const home = buildSample();
+  const kinds = [...new Set(CATALOG.map((c) => c.cat))].map((cat) => `${cat}: ${CATALOG.filter((c) => c.cat === cat).map((c) => c.id).join(', ')}`);
+  const notes = {
+    _guide: [
+      'This is a Nidorama home file (a floor plan with its devices). Keys starting with _ are notes for whoever writes a file like this. Leave them out of your own file; the app ignores them anyway.',
+      'Units: metres. x runs east (to the right), y runs south (down the page), z is height above the floor. Put the top-left outside corner of the home at [0, 0].',
+      'The file must be plain JSON: no comments, no trailing commas, every id unique.',
+      'levels: one entry per plan. A home with two storeys has two levels: "floor": 0 (ground) and "floor": 1, both with the same "place". Each level needs id, name, floor, place, ceilingHeight, walls and rooms; the other lists may be empty [].',
+      'place: { "x": 0, "y": 0, "rot": 0 } for the main house. A separate building (a shed, a granny flat) is its own level on "floor": 0 with its own place: where its [0, 0] stands, in metres from the house\'s [0, 0], and its turn in degrees.',
+      'Optional, and safe to leave out of a first file: a level with "roof": true (only roof pieces, see _roofs), the level with "site": true (the yard around the buildings), "pages" (widget dashboards), "panelPage" (widgets beside a plan) and "more" (shortcuts).',
+      'entity: a Home Assistant entity id such as "light.kitchen_ceiling". Use only ids from the person\'s own device list, exactly as written. Never make one up: leave it out or use "".',
+    ],
+  };
+  const levelNotes = {
+    _walls: 'Each wall is a straight centre line from "a" to "b" ([x, y]). Outside walls: "exterior": true, "thickness": 0.2. Inside walls: "exterior": false, "thickness": 0.1. "height" is usually the ceilingHeight. Walls that meet share the same corner point exactly. "bulge" (optional) curves a wall: how far its middle sits to the right of the straight line, in metres.',
+    _openings: 'Doors and windows belong to their wall, in its "openings" list: "type" door | window | slider | opening; "offset" = metres from the wall\'s "a" end to where the opening starts; "width"; "sill" (0 for doors, about 0.9 for windows); "head" (top, about 2.04 for doors, 2.1 for windows). "style" (optional): doors hinged | double | sliding, windows fixed | sliding | double-hung | grid.',
+    _rooms: 'One room per area you can tap: "name", "polygon" (its corners, clockwise, along the wall centre lines), "floor" (a material: timber, tiles, carpet, concrete, stone, grass, paving or any used in this sample), "labelAt" (the middle). Outside areas such as a garden or deck: "outdoor": true.',
+    _objects: `Furniture and devices. The short form is enough: { "id", "kind", "at": [x, y], "rotation": degrees, "name", "entity" }; the app fills in the shape. "kind" is one of — ${kinds.join(' · ')}. Lights (floor-lamp, table-lamp, pendant, downlight, wall-light, chandelier, strip-light) glow when their "entity" is on. Keep every item inside its room.`,
+    _lights: 'Ceiling lights not tied to a piece of furniture: { "id", "name", "room" (a room id), "kind": "ceiling", "entity" }. A lamp from _objects needs no entry here.',
+    _roomControls: 'Per room id: { "mainLight": an entity }. Tapping the room then switches that light.',
+    _buttons: 'Optional buttons on the plan: { "id", "name", "entity", "icon", "size": small | large | expand, "at": [x, y] }.',
+    _roofs: 'Only on a level with "roof": true, placed on the floor above the walls it covers, with the same "place": pieces { "id", "x", "y" (the centre), "w", "d" (width east-west, depth north-south, without the overhang), "rot", "type": gable | hip | skillion | flat, "pitch" (degrees), "overhang", "material": tiles | charcoal | metal | slate | light }.',
+  };
+  for (const L of home.levels) {
+    if (L.site) L._guide = 'The yard around the buildings (optional). Areas, fences (as walls), outdoor furniture and buttons, like any level.';
+    else if (L.roof) L._guide = levelNotes._roofs;
+    else Object.assign(L, levelNotes);
+  }
+  return { ...notes, ...home };
+}

@@ -2,7 +2,7 @@
 // Homes are plain nidorama.home/1 files: created in the app or imported. Nothing is built in.
 // Saved on the device, and mirrored into Home Assistant (per-user data) so other devices get them.
 import { upgradeSite } from './site.js';
-import { buildSample } from './sample.js';
+import { buildSample, guideSample } from './sample.js';
 import { upgradeFile, oldKey, carryOver } from './legacy.js'; // first: it brings settings across before they are read
 import { uid, makeObject, CATALOG } from './catalog.js';
 import { getBlob, putBlob, blobToDataURL, dataURLToBlob } from './blobs.js';
@@ -67,9 +67,29 @@ export function sampleHome() {
   return home;
 }
 /** The sample as file text, without adding it to this device (for the "plan from a sketch" guide). */
-export const sampleFile = () => JSON.stringify(buildSample(), null, 1);
+// With notes for whoever writes a file like it (keys starting with _, left out when a file is read).
+export const sampleFile = () => JSON.stringify(guideSample(), null, 1);
 
 // ---------- import / export ----------
+/** Leave out notes (keys starting with _) wherever they are. */
+function stripNotes(x) {
+  if (Array.isArray(x)) return x.map(stripNotes);
+  if (x && typeof x === 'object') { for (const k of Object.keys(x)) { if (k.startsWith('_')) delete x[k]; else x[k] = stripNotes(x[k]); } }
+  return x;
+}
+/** Furniture may be written short ({ kind, at: [x, y], rotation, name, entity }): its shape comes from the catalogue. */
+function fullObject(L, o) {
+  if (!o || o.parts?.length) return o;
+  const item = CATALOG.find((c) => c.id === o.kind), at = o.at || (o.bounds ? [(o.bounds.min[0] + o.bounds.max[0]) / 2, (o.bounds.min[1] + o.bounds.max[1]) / 2] : null);
+  if (!item || !at) return null;
+  const room = L.rooms.find((r) => r.polygon && pointIn(at, r.polygon))?.id || null;
+  const { object, light } = makeObject(item, at[0], at[1], room);
+  if (o.id) { if (light) light.fixture = o.id; object.id = o.id; }
+  for (const k of ['name', 'entity', 'rotation', 'gestures', 'color']) if (o[k] != null) object[k] = o[k];
+  if (light && !L.lights.some((l) => l.fixture === object.id)) { if (o.entity && /^(light|switch)\./.test(o.entity)) light.entity = o.entity; light.name = object.name; L.lights.push(light); }
+  return object;
+}
+const pointIn = ([x, y], poly) => { let inside = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const [xi, yi] = poly[i], [xj, yj] = poly[j]; if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside; } return inside; };
 /** Validate and tidy a parsed home file. Throws a readable error if it is not one. */
 export function normalizeHome(data) {
   upgradeFile(data);
@@ -77,7 +97,7 @@ export function normalizeHome(data) {
     throw new Error('This is not a Nidorama home file (missing "schema": "nidorama.home/1").');
   }
   if (!Array.isArray(data.levels) || !data.levels.length) throw new Error('The home file has no levels.');
-  const home = structuredClone(data);
+  const home = stripNotes(structuredClone(data));
   home.id ||= uid('home');
   home.name ||= 'Imported home';
   home.homeAssistant ||= {};
@@ -89,22 +109,37 @@ export function normalizeHome(data) {
     L.roomControls ||= {};
     L.ceilingHeight ||= 2.4;
     for (const w of L.walls) { w.openings ||= []; w.thickness ||= 0.1; w.height ||= L.ceilingHeight; }
+    L.objects = L.objects.map((o) => fullObject(L, o)).filter(Boolean);
     for (const o of L.objects) o.rotation ||= 0;
+    for (const r of L.rooms) if (!r.labelAt && r.polygon?.length) r.labelAt = [r.polygon.reduce((a, q) => a + q[0], 0) / r.polygon.length, r.polygon.reduce((a, q) => a + q[1], 0) / r.polygon.length];
   }
   upgradeSite(home);
   home.updatedAt = Date.now();
   return home;
 }
 
-/** Add a home from file text. A home with the same id is replaced. Returns the home. */
+// JSON with line and block comments and trailing commas (as chat assistants often write it) made plain. Strings are left alone.
+function withoutComments(t) {
+  let out = '', i = 0, inStr = false;
+  while (i < t.length) {
+    const c = t[i], d = t[i + 1];
+    if (inStr) { out += c; if (c === '\\') { out += d ?? ''; i += 2; continue; } if (c === '"') inStr = false; i++; continue; }
+    if (c === '"') { inStr = true; out += c; i++; continue; }
+    if (c === '/' && d === '/') { while (i < t.length && t[i] !== '\n') i++; continue; }
+    if (c === '/' && d === '*') { i = t.indexOf('*/', i + 2); i = i < 0 ? t.length : i + 2; continue; }
+    out += c; i++;
+  }
+  return out.replace(/,(\s*[}\]])/g, '$1');
+}
 /** Read a home file's text (tidied and checked) without adding it to this device. Throws a readable error. */
 export function readHomeText(text) {
   let data;
   try { data = JSON.parse(text); }
-  catch {
+  catch { try { data = JSON.parse(withoutComments(text)); } catch { /* carry on below */ } }
+  if (!data) {
     // Text copied out of a chat often has words or code marks around the file: take what is between the first { and the last }.
     const a = text.indexOf('{'), b = text.lastIndexOf('}');
-    try { data = JSON.parse(text.slice(a, b + 1)); }
+    try { data = JSON.parse(withoutComments(text.slice(a, b + 1))); }
     catch (e) { throw new Error(`This is not a complete home file: ${a < 0 ? 'there is no { … } in it' : e.message}. If it came from a chat assistant, ask it to send the whole file again.`); }
   }
   return normalizeHome(data);

@@ -100,3 +100,7 @@ Materials so far: `timber-dark`, `marble-tile`, `mosaic-tile`, `decking`, `stair
   on a level with walls they make it a loft); `levels[].hideList` / `pages[].hideList` (left out of the dashboard
   list outside edit mode); `levels[].panelView: { kind: 'web', url } | { kind: 'ha', path }` (a web page or a Home
   Assistant dashboard in the widget panel).
+- v0.22.2: keys starting with `_` are notes and are left out when a file is read (the sample saved from the
+  sketch guide has them: `_guide` at the top, `_walls`, `_openings`, `_rooms`, `_objects`, … on a level).
+  Comments and trailing commas are accepted. Furniture may be short: `{ id, kind, at: [x, y], rotation, name,
+  entity }`; the shape (and a lamp's light) is made from the catalogue.

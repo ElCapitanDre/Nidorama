@@ -75,6 +75,9 @@ How the format works:
 - Use the sample to see how everything else is written, but only include what I have given you. Leave out the sample's own furniture, lights, buttons, "pages", "panelPage" and "more". Never invent device names: where the sample has an "entity" and I gave you no device for it, leave it out or use "".
 - If I attached a device list: connect things to it. Put each light, blind, fan, speaker and so on in the room the list gives, as the sample does (a lamp or fitting from the sample's furniture with its "entity", and the room's main light in "roomControls"). Use only ids that are in my list, exactly as written, and never make one up. If you cannot tell where a device belongs, leave it out and tell me.
 - If I attached room photos: use them to place furniture. Choose each piece from the furniture kinds used in the sample ("kind"), put it roughly where the photo shows it, and keep it inside its room. Without photos, add no furniture.
+- The sample's notes (keys starting with _) explain every part. Follow them, and leave the notes out of your file.
+- Make one level per storey: "floor": 0 for the ground floor, 1 for the next, each with "place": { "x": 0, "y": 0, "rot": 0 }. Leave out the sample's "Whole site" level, its roof levels and its shed unless I ask for them.
+- Furniture can be written in the short form the notes describe ("kind", "at", "rotation"); the app fills in the shapes.
 - Give every wall, opening and room its own "id". Keep the "schema" line. The result must be plain valid JSON with no comments.
 
 IMPORTANT, how to answer:
