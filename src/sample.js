@@ -6,7 +6,7 @@ import { outlineBox, newPiece, roofLevel } from './site.js';
 
 export function buildSample() {
   const L = { id: uid('level'), name: 'Ground floor', elevation: 0, ceilingHeight: 2.4, walls: [], rooms: [], floors: [], voids: [], stairs: [], objects: [], lights: [], roomControls: {}, buttons: [] };
-  const home = { schema: 'nidorama.home/1', id: uid('home'), name: 'Sample cottage', units: 'metres', axes: 'x east, y south, z up from finished floor', homeAssistant: { heating: 'climate.sample_heating' }, levels: [L], pages: [], updatedAt: Date.now() };
+  const home = { schema: 'nidorama.home/1', id: uid('home'), name: 'Sample cottage', units: 'metres', axes: 'x east, y south, z up from finished floor', homeAssistant: { heating: 'climate.sample_heating' }, levels: [L], pages: [], sample: true, updatedAt: Date.now() };
 
   // ----- walls, doors and windows (each window and door in a different style) -----
   const wall = (a, b, exterior, openings = [], extra = {}) => L.walls.push({ id: uid('w'), a, b, thickness: exterior ? 0.2 : 0.1, height: 2.4, exterior, openings: openings.map((o) => ({ id: uid('o'), ...o })), ...extra });

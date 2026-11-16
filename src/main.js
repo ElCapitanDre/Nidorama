@@ -160,6 +160,8 @@ app.cameraUrl = (entity) => {
   return pic ? `${ha.url.replace(/\/$/, '')}${pic}${pic.includes('?') ? '&' : '?'}t=${Date.now()}` : '';
 };
 /** Ask Home Assistant something that answers back (a forecast, a calendar's events). */
+app.units = device.units === 'imperial' ? 'imperial' : 'metric'; // #123
+function setUnits(u) { device.units = u; app.units = u; saveDevice(); if (editor.active) { editor.renderPanel(); editor.draw(); } }
 app.haUrl = () => hub.ha?.url || '';
 app.ask = (msg) => (hub.ha ? hub.ha.request(msg) : Promise.reject(new Error('not connected')));
 /** Album art of what a speaker is playing (it changes with the track, so no refreshing is needed). */
@@ -761,6 +763,8 @@ function renderWelcome() {
     h('img', { src: 'icon.svg', alt: '', width: 72, height: 72 }),
     h('h1', {}, 'Nidorama'),
     h('p', {}, 'Look down into a model of your home and tap the things in it. Draw your own plan, or load a home file.'),
+    h('div', { class: 'row units-row' }, h('div', { class: 'row-label' }, 'Measure in'),
+      seg([['metric', 'Metres'], ['imperial', 'Feet and inches']], app.units, (v) => { setUnits(v); renderWelcome(); })),
     h('button', { class: 'wide primary', onclick: createHome }, icon('plus'), 'Create a home'),
     h('button', { class: 'wide', onclick: () => sketchGuide() }, icon('edit'), 'Make a plan from a paper sketch'),
     h('button', { class: 'wide', onclick: () => fileInput.click() }, icon('file'), 'Import a home file, or restore a backup'),
@@ -811,6 +815,16 @@ async function deviceList() {
     .map((x) => ({ id: x.entity_id, name: x.attributes?.friendly_name || '', kind: domainOf(x.entity_id), room: areaOf(x.entity_id) }))
     .sort((a, b) => a.room.localeCompare(b.room) || a.id.localeCompare(b.id));
   return { about: 'Devices in my home, for making a floor-plan home file. Use these ids exactly; never invent one.', devices };
+}
+/** The three ways to begin a home of one's own, as on the welcome screen (#124). */
+function startOwnHome() {
+  const close = modal(h('div', { class: 'menu' },
+    h('div', { class: 'panel-head' }, h('h2', {}, 'Start my own home'), h('button', { class: 'round small', 'aria-label': 'Close', onclick: () => close() }, icon('close'))),
+    h('p', { class: 'hint pad' }, 'The sample stays here until you delete it, so you can come back to it.'),
+    h('div', { class: 'stack pad' },
+      h('button', { class: 'wide primary', onclick: () => { close(); createHome(); } }, icon('plus'), 'Draw it myself'),
+      h('button', { class: 'wide', onclick: () => { close(); sketchGuide(); } }, icon('edit'), 'Make a plan from a paper sketch'),
+      h('button', { class: 'wide', onclick: () => { close(); fileInput.click(); } }, icon('file'), 'Import a home file'))));
 }
 function createHome() {
   const name = prompt('Name of the home', 'My home');
@@ -901,6 +915,8 @@ function integrationApps() {
 let moreOpen = false; // whether "Settings and more" is open in the More menu; closed again each time the menu is
 function moreSheet() {
   const hm = home(), c = app.conn, items = [];
+  // Trying the sample: a clear way to begin one's own home (#124).
+  if (hm && !editMode && (hm.sample || hm.name === 'Sample cottage')) items.push(menuItem('plus', 'Start my own home', 'draw it, from a paper sketch, or a home file', () => { closeSheet(); startOwnHome(); }, icon('chevron')), h('div', { class: 'msep' }));
   if (hm) {
     items.push(h('div', { class: 'menu-title' }, 'Shortcuts'));
     if (editMode) {
@@ -1050,38 +1066,54 @@ function placesSheet() {
   for (const hm of lib.homes) {
     const go = (kind, id) => show({ homeId: hm.id, kind, id });
     const here = (kind, id) => cur?.homeId === hm.id && cur.kind === kind && cur.id === id;
+    const homeActions = () => {
+      const act = (fn) => () => { close(); fn(); };
+      const close = modal(h('div', { class: 'menu' },
+        h('div', { class: 'panel-head' }, h('h2', {}, hm.name), h('button', { class: 'round small', 'aria-label': 'Close', onclick: () => close() }, icon('close'))),
+        menuItem('edit', 'Rename', null, act(() => { const n = prompt('Home name', hm.name); if (n) { mutate(hm, (x) => (x.name = n.trim()), { undoable: false }); renderNav(); openSheet = 'places'; renderSheet(); } })),
+        menuItem('file', 'Export as a file', null, act(() => exportCurrent(hm))),
+        h('div', { class: 'msep' }),
+        h('div', { class: 'danger-item' }, menuItem('trash', 'Delete this home', null, act(() => { if (confirm(`Delete "${hm.name}" from this app? Export it first if you want to keep it.`)) { deleteHome(hm.id); show(valid(cur) ? cur : firstView()); if (lib.homes.length) { openSheet = 'places'; renderSheet(); } } })))));
+    };
     items.push(editMode ? h('div', { class: 'home-head' }, h('h3', {}, hm.name),
-      h('button', { class: 'round small', 'aria-label': `Rename ${hm.name}`, onclick: () => { const n = prompt('Home name', hm.name); if (n) { mutate(hm, (x) => (x.name = n.trim()), { undoable: false }); renderNav(); renderSheet(); } } }, icon('edit')),
-      h('button', { class: 'round small', 'aria-label': `Export ${hm.name} as a file`, title: 'Export as a file', onclick: () => exportCurrent(hm) }, icon('file')),
-      h('button', { class: 'round small', 'aria-label': `Delete ${hm.name}`, onclick: () => { if (confirm(`Delete "${hm.name}" from this app? Export it first if you want to keep it.`)) { deleteHome(hm.id); show(valid(cur) ? cur : firstView()); if (lib.homes.length) { openSheet = 'places'; renderSheet(); } } } }, icon('trash'))) : h('div', { class: 'home-head' }, h('h3', {}, hm.name)));
+      h('button', { class: 'round small', 'aria-label': `${hm.name}: more`, title: 'More', onclick: homeActions }, icon('more'))) : h('div', { class: 'home-head' }, h('h3', {}, hm.name)));
     if (editMode) {
       const ed = (fn) => { mutate(hm, fn, { undoable: false }); renderNav(); renderSheet(); };
+      // One ⋯ button per dashboard (#125): its actions in a small menu, each with its words.
       const row = (d, kind, list) => {
-        const idx = list.indexOf(d);
+        const actions = () => {
+          const idx = list.indexOf(d), act = (fn) => () => { close(); fn(); };
+          const close = modal(h('div', { class: 'menu' },
+            h('div', { class: 'panel-head' }, h('h2', {}, d.name), h('button', { class: 'round small', 'aria-label': 'Close', onclick: () => close() }, icon('close'))),
+            idx > 0 ? menuItem('up', 'Move up', null, act(() => ed(() => list.splice(idx - 1, 0, list.splice(idx, 1)[0])))) : null,
+            idx < list.length - 1 ? menuItem('down', 'Move down', null, act(() => ed(() => list.splice(idx + 1, 0, list.splice(idx, 1)[0])))) : null,
+            menuItem(d.hideList ? 'eye' : 'eyeoff', d.hideList ? 'Show in this list' : 'Hide from this list', 'outside edit mode', act(() => ed(() => { if (d.hideList) delete d.hideList; else d.hideList = true; }))),
+            menuItem(d.private ? 'home' : 'lock', d.private ? 'Share with the home' : 'Only me', d.private ? 'now: only you see it' : 'now: shared with the home', act(() => ed(() => { if (d.private) delete d.private; else d.private = true; }))),
+            menuItem('edit', 'Rename', null, act(() => { const n = prompt('Dashboard name', d.name); if (n && n.trim()) ed(() => (d.name = n.trim())); })),
+            menuItem('copy', 'Duplicate', null, act(() => {
+              const n = prompt('Name of the copy', `${d.name} copy`);
+              if (!n || !n.trim()) return;
+              // A separate copy: changing its furniture, buttons or settings leaves the original alone (#55).
+              const copy = structuredClone(d);
+              copy.id = uid(kind === 'page' ? 'page' : 'level');
+              copy.name = n.trim();
+              for (const b of copy.buttons || []) if (b.id.endsWith(`-${d.id}`)) b.id = `${b.id.slice(0, -d.id.length)}${copy.id}`;
+              mutate(hm, () => list.splice(list.indexOf(d) + 1, 0, copy), { undoable: false });
+              show({ homeId: hm.id, kind, id: copy.id });
+            })),
+            h('div', { class: 'msep' }),
+            h('div', { class: 'danger-item' }, menuItem('trash', 'Delete', null, act(() => {
+              if (kind === 'level' && hm.levels.length === 1) return alert('A home needs at least one floor plan, so the last one cannot be deleted. Delete the whole home instead, or add another floor plan first.');
+              if (!confirm(`Delete the dashboard "${d.name}"?${kind === 'level' ? ' Everything drawn on this floor plan goes with it.' : ''}`)) return;
+              const wasHere = cur?.id === d.id;
+              ed(() => list.splice(list.indexOf(d), 1));
+              if (wasHere) { show(firstView()); openSheet = 'places'; renderSheet(); }
+            })))));
+        };
         return h('div', { class: 'row pad dash-row' }, icon(kind === 'page' ? 'grid' : 'plan'),
-          h('button', { class: 'row-label linkish', 'aria-label': `Open ${d.name}`, onclick: () => show({ homeId: hm.id, kind, id: d.id }) }, h('div', {}, d.name)),
-          h('button', { class: 'round small', 'aria-label': `Move ${d.name} up`, disabled: idx === 0, onclick: () => ed(() => list.splice(idx - 1, 0, list.splice(idx, 1)[0])) }, icon('up')),
-          h('button', { class: 'round small', 'aria-label': `${d.name}: ${d.private ? 'share with the home' : 'make it only mine'}`, title: d.private ? 'Only me' : 'Shared with the home', onclick: () => ed(() => { if (d.private) delete d.private; else d.private = true; }) }, icon(d.private ? 'lock' : 'home')),
-          h('button', { class: 'round small', 'aria-pressed': String(!d.hideList), 'aria-label': `${d.name}: ${d.hideList ? 'hidden from this list outside edit mode, tap to show it' : 'shown in this list, tap to hide it outside edit mode'}`, title: d.hideList ? 'Hidden from the list' : 'Shown in the list', onclick: () => ed(() => { if (d.hideList) delete d.hideList; else d.hideList = true; }) }, icon(d.hideList ? 'eyeoff' : 'eye')),
-          h('button', { class: 'round small', 'aria-label': `Rename ${d.name}`, onclick: () => { const n = prompt('Dashboard name', d.name); if (n && n.trim()) ed(() => (d.name = n.trim())); } }, icon('edit')),
-          h('button', { class: 'round small', 'aria-label': `Duplicate ${d.name}`, title: 'Duplicate', onclick: () => {
-            const n = prompt('Name of the copy', `${d.name} copy`);
-            if (!n || !n.trim()) return;
-            // A separate copy: changing its furniture, buttons or settings leaves the original alone (#55).
-            const copy = structuredClone(d);
-            copy.id = uid(kind === 'page' ? 'page' : 'level');
-            copy.name = n.trim();
-            for (const b of copy.buttons || []) if (b.id.endsWith(`-${d.id}`)) b.id = `${b.id.slice(0, -d.id.length)}${copy.id}`;
-            mutate(hm, () => list.splice(idx + 1, 0, copy), { undoable: false });
-            show({ homeId: hm.id, kind, id: copy.id });
-          } }, icon('copy')),
-          h('button', { class: 'round small', 'aria-label': `Delete ${d.name}`, onclick: () => {
-            if (kind === 'level' && hm.levels.length === 1) return alert('A home needs at least one floor plan, so the last one cannot be deleted. Delete the whole home instead, or add another floor plan first.');
-            if (!confirm(`Delete the dashboard "${d.name}"?${kind === 'level' ? ' Everything drawn on this floor plan goes with it.' : ''}`)) return;
-            const wasHere = cur?.id === d.id;
-            ed(() => list.splice(list.indexOf(d), 1));
-            if (wasHere) { show(firstView()); openSheet = 'places'; renderSheet(); }
-          } }, icon('trash')));
+          h('button', { class: 'row-label linkish', 'aria-label': `Open ${d.name}`, onclick: () => show({ homeId: hm.id, kind, id: d.id }) },
+            h('div', {}, d.name), d.hideList || d.private ? h('div', { class: 'sub' }, [d.hideList ? 'hidden from the list' : '', d.private ? 'only me' : ''].filter(Boolean).join(' · ')) : null),
+          h('button', { class: 'round small', 'aria-label': `${d.name}: more`, title: 'More', onclick: actions }, icon('more')));
       };
       items.push(h('div', { class: 'menu-title sub-title' }, 'Plans'));
       for (const L of hm.levels) items.push(row(L, 'level', hm.levels));
@@ -1481,6 +1513,8 @@ const subHead = (title) => h('div', { class: 'panel-head' },
 function lookSettings() {
   const L = level();
   return h('div', { class: 'menu settings' }, subHead('Look and feel'),
+    h('div', { class: 'menu-row' }, icon('edit'), h('span', { class: 'grow' }, 'Measure in', h('span', { class: 'sub' }, 'Sizes and lengths on this device. Homes keep their measurements whichever you choose.')),
+      seg([['metric', 'Metres'], ['imperial', 'Feet and inches']], app.units, (v) => { setUnits(v); renderSheet(); })),
     h('h3', { class: 'pad' }, 'Plan'),
     h('p', { class: 'hint' }, 'How a floor plan is drawn on this device: its materials, light and camera angle. It does not change what is in the plan.'),
     L ? [h('div', { class: 'menu-row' }, icon('layers'), h('span', { class: 'grow' }, 'Plan style'),
@@ -2526,6 +2560,7 @@ async function boot() {
     if (r.ok) { const cfg = await r.json(); if (cfg.addon) window.__NIDORAMA_ADDON__ = cfg; }
   } catch {}
   await initStore();
+  app.units = device.units === 'imperial' ? 'imperial' : 'metric';
   await finishHaSignIn();
   connect();
   const start = valid(device.start) ? device.start : valid(device.last) ? device.last : firstView();

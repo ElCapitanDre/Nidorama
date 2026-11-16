@@ -166,7 +166,32 @@ export function seg(options, value, onpick) {
   return h('div', { class: 'seg' }, options.map(([v, label]) => h('button', { class: v === value ? 'on' : '', onclick: () => onpick(v) }, label)));
 }
 /** Labelled number field (metres etc.). Commits on change. */
+// ---------- units (#123): home files are always in metres; a device may show feet and inches ----------
+export const imperial = () => app.units === 'imperial';
+/** A length in metres, written for this device: "2.40 m" or "7′ 10″". */
+export function len(m, digits = 2) {
+  if (!imperial()) return `${(+m).toFixed(digits)} m`;
+  const ti = Math.round(Math.abs(m) / 0.0254), ft = Math.floor(ti / 12), inch = ti % 12;
+  return `${m < 0 ? '−' : ''}${ft}′ ${inch}″`;
+}
+/** Feet and inches typed in any usual way (12' 6", 12 6, 12.5, 6", 12ft 6in) as metres; NaN if it cannot be read. */
+export function parseFeet(text) {
+  const t = String(text).trim().toLowerCase().replace(/[′’]/g, "'").replace(/[″”]/g, '"');
+  if (!t) return NaN;
+  const only = t.match(/^(-?\d+(?:\.\d+)?)\s*(?:"|in|inch|inches)$/);
+  if (only) return parseFloat(only[1]) * 0.0254;
+  const m = t.match(/^(-?\d+(?:\.\d+)?)\s*(?:'|ft|feet|foot)?\s*(?:(\d+(?:\.\d+)?)\s*(?:"|in|inch|inches)?)?$/);
+  if (!m) return NaN;
+  const ft = parseFloat(m[1]), inch = m[2] ? parseFloat(m[2]) : 0;
+  return (Math.abs(ft) * 12 + inch) * 0.0254 * (ft < 0 ? -1 : 1);
+}
+const feetText = (m) => { const ti = Math.round(Math.abs(m) / 0.0254), ft = Math.floor(ti / 12), inch = ti % 12; return `${m < 0 ? '-' : ''}${ft}' ${inch}"`; };
 export function numField(label, value, onchange, { step = 0.05, min = -1000, max = 1000, unit = 'm' } = {}) {
+  if (unit === 'm' && imperial()) { // lengths in feet and inches; stored in metres
+    const input = h('input', { type: 'text', value: Number.isFinite(value) ? feetText(value) : '', inputmode: 'text', placeholder: '12\' 6"', autocomplete: 'off' });
+    input.addEventListener('change', () => { const v = parseFeet(input.value); if (Number.isFinite(v)) { const c = Math.max(min, Math.min(max, Math.round(v * 1000) / 1000)); input.value = feetText(c); onchange(c); } else input.value = Number.isFinite(value) ? feetText(value) : ''; });
+    return h('label', { class: 'field' }, h('span', {}, label), h('span', { class: 'field-in' }, input));
+  }
   const input = h('input', { type: 'number', step, min, max, value: Number.isFinite(value) ? +(+value).toFixed(3) : '', inputmode: 'decimal' });
   input.addEventListener('change', () => { const v = parseFloat(input.value); if (Number.isFinite(v)) onchange(Math.max(min, Math.min(max, v))); });
   return h('label', { class: 'field' }, h('span', {}, label), h('span', { class: 'field-in' }, input, unit ? h('em', {}, unit) : null));

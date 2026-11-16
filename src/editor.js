@@ -1,6 +1,6 @@
 // The designer: draw walls (by tapping or by exact length), rooms, doors and windows, place and edit
 // furniture, and connect things to Home Assistant entities. Works on the level currently shown.
-import { h, nodes, icon, seg, numField, textField, selectField, entityField, menuItem, modal, pickEntity, pickIcon, iconOf, entityName, pickFile, toast } from './ui.js';
+import { h, nodes, icon, seg, numField, textField, selectField, entityField, menuItem, modal, pickEntity, pickIcon, iconOf, entityName, pickFile, toast, len, imperial } from './ui.js';
 import { mutate, undo, redo, canUndo, canRedo, newLevel, savePhoto } from './store.js';
 import { putBlob, delBlob, shrinkPhoto } from './blobs.js';
 import { pickModel } from './modelpicker.js';
@@ -26,7 +26,7 @@ const s = (tag, attrs, text) => {
   if (text != null) el.textContent = text;
   return el;
 };
-const fmt = (m) => `${(+m).toFixed(2)} m`;
+const fmt = (m) => len(m);
 const OPENINGS = {
   door: { label: 'Door', width: 0.82, sill: 0, head: 2.04, style: 'hinged' },
   window: { label: 'Window', width: 1.2, sill: 0.9, head: 2.1, style: 'fixed' },
@@ -791,7 +791,7 @@ export class Editor {
     }
     if (d?.kind === 'roofRect' && d.b) {
       poly([d.a, [d.b[0], d.a[1]], d.b, [d.a[0], d.b[1]]], 'preview fill');
-      label([(d.a[0] + d.b[0]) / 2, (d.a[1] + d.b[1]) / 2], `${Math.abs(d.b[0] - d.a[0]).toFixed(2)} × ${Math.abs(d.b[1] - d.a[1]).toFixed(2)} m`, 'dim live');
+      label([(d.a[0] + d.b[0]) / 2, (d.a[1] + d.b[1]) / 2], `${len(Math.abs(d.b[0] - d.a[0]))} × ${len(Math.abs(d.b[1] - d.a[1]))}`, 'dim live');
     }
     if (d?.kind === 'button' && d.moved && d.pos) { // the grid the button snaps to, around it
       const g = this.btnGrid, n = Math.max(2, Math.min(12, Math.round(1.5 / g)));
@@ -851,7 +851,7 @@ export class Editor {
     }
     if (d?.kind === 'room' && d.b) {
       poly([d.a, [d.b[0], d.a[1]], d.b, [d.a[0], d.b[1]]], 'preview fill');
-      label([(d.a[0] + d.b[0]) / 2, (d.a[1] + d.b[1]) / 2], `${Math.abs(d.b[0] - d.a[0]).toFixed(2)} × ${Math.abs(d.b[1] - d.a[1]).toFixed(2)} m`, 'dim live');
+      label([(d.a[0] + d.b[0]) / 2, (d.a[1] + d.b[1]) / 2], `${len(Math.abs(d.b[0] - d.a[0]))} × ${len(Math.abs(d.b[1] - d.a[1]))}`, 'dim live');
     }
     o.replaceChildren(...kids);
   }
@@ -999,14 +999,14 @@ export class Editor {
     return h('div', { class: 'cat-item' + (on ? ' on' : '') },
       h('button', { class: 'thumb', 'aria-label': `See the ${i.name.toLowerCase()} bigger`, title: 'See it bigger', onclick: () => this.showItem(i, pick, action) },
         pic ? h('img', { src: pic, alt: '', width: 56, height: 56 }) : h('span', { class: 'swatch', style: `background:${i.parts.at(-1)[6]}` })),
-      h('button', { class: 'cat-pick', onclick: pick }, h('span', { class: 'grow' }, i.name, h('span', { class: 'sub' }, `${i.size[0]} × ${i.size[1]} m${i.light ? ' · light' : ''}`))));
+      h('button', { class: 'cat-pick', onclick: pick }, h('span', { class: 'grow' }, i.name, h('span', { class: 'sub' }, `${len(i.size[0])} × ${len(i.size[1])}${i.light ? ' · light' : ''}`))));
   }
   showItem(i, pick, action) {
     const pic = thumb(i, 300);
     const close = modal(h('div', { class: 'menu item-preview' },
       h('div', { class: 'panel-head' }, h('h2', {}, i.name), h('button', { class: 'round small', 'aria-label': 'Close', onclick: () => close() }, icon('close'))),
       pic ? h('img', { src: pic, alt: `What the ${i.name.toLowerCase()} looks like`, width: 300, height: 300 }) : null,
-      h('p', { class: 'hint' }, `${i.size[0]} m wide · ${i.size[1]} m deep · ${i.size[2]} m high${i.light ? ' · can be a light' : ''}. Size and colours can be changed after it is placed.`),
+      h('p', { class: 'hint' }, `${len(i.size[0])} wide · ${len(i.size[1])} deep · ${len(i.size[2])} high${i.light ? ' · can be a light' : ''}. Size and colours can be changed after it is placed.`),
       h('button', { class: 'wide primary', onclick: () => { close(); pick(); } }, icon('check'), action)));
   }
 
@@ -1044,7 +1044,7 @@ export class Editor {
       h('div', { class: 'movepad' },
         h('div', { class: 'dpad' }, arrow('up', 0, -1, 'north'), h('div', {}, arrow('left', -1, 0, 'west'), arrow('chevron', 1, 0, 'east')), arrow('down', 0, 1, 'south')),
         h('div', { class: 'stack' },
-          seg([[0.01, '1 cm'], [0.05, '5 cm'], [0.25, '25 cm']], this.step, (v) => { this.step = v; this.renderPanel(); }),
+          seg(imperial() ? [[0.0127, '½″'], [0.0508, '2″'], [0.3048, '1′']] : [[0.01, '1 cm'], [0.05, '5 cm'], [0.25, '25 cm']], this.step, (v) => { this.step = v; this.renderPanel(); }),
           h('div', { class: 'btns' },
             h('button', { class: 'wide', 'aria-label': 'Rotate left 22.5 degrees', onclick: () => edit((lv, ob) => rotateObject(lv, ob, -22.5)) }, icon('rotateL'), '22.5°'),
             h('button', { class: 'wide', 'aria-label': 'Rotate right 22.5 degrees', onclick: () => edit((lv, ob) => rotateObject(lv, ob, 22.5)) }, icon('rotate'), '22.5°')),
@@ -1137,7 +1137,7 @@ export class Editor {
           h('button', { class: 'round', 'aria-label': `Slide the ${name.toLowerCase()} towards the start of the wall`, onclick: () => slide(-1) }, icon('left')),
           h('button', { class: 'round', 'aria-label': `Slide the ${name.toLowerCase()} towards the end of the wall`, onclick: () => slide(1) }, icon('chevron')))),
         h('div', { class: 'stack' },
-          seg([[0.01, '1 cm'], [0.05, '5 cm'], [0.25, '25 cm']], this.step, (v) => { this.step = v; this.renderPanel(); }),
+          seg(imperial() ? [[0.0127, '½″'], [0.0508, '2″'], [0.3048, '1′']] : [[0.01, '1 cm'], [0.05, '5 cm'], [0.25, '25 cm']], this.step, (v) => { this.step = v; this.renderPanel(); }),
           h('div', { class: 'btns' },
             h('button', { class: 'wide', 'aria-label': 'Narrower', onclick: () => widen(-1) }, icon('minus'), 'Width'),
             h('button', { class: 'wide', 'aria-label': 'Wider', onclick: () => widen(1) }, icon('plus'), 'Width')))),
@@ -1218,7 +1218,7 @@ export class Editor {
   }
   gridSeg() {
     return h('div', { class: 'row' }, h('div', { class: 'row-label' }, 'Snap to grid'),
-      seg([[0.05, 'Fine'], [0.25, '25 cm'], [0.5, '50 cm'], [1, '1 m']], this.btnGrid, (v) => { this.btnGrid = v; this.renderPanel(); }));
+      seg([[0.05, 'Fine'], [0.25, imperial() ? len(0.25) : '25 cm'], [0.5, imperial() ? len(0.5) : '50 cm'], [1, imperial() ? len(1) : '1 m']], this.btnGrid, (v) => { this.btnGrid = v; this.renderPanel(); }));
   }
   buttonInspector(b) {
     const edit = (fn) => this.change((lv) => fn(lv.buttons.find((q) => q.id === b.id)));
