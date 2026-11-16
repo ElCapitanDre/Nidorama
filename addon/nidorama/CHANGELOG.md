@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.23.1
+- Units sit at the top of Settings: Metric or Imperial.
+- Settings → Updates and backup starts with Check for updates automatically, On or Off.
+- A waiting update shows as a green dot on the More button instead of a chip on the plan.
+
 ## 0.23.0
 - Feet and inches: choose Metric or Imperial units when you first open the app, or later at the top of Settings. Homes keep their measurements either way.
 - Trying the sample home? More → Start my own home shows the ways to begin yours.

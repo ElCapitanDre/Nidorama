@@ -931,7 +931,7 @@ function moreSheet() {
   }
   // Everything that is not a shortcut sits behind one row, closed until asked for (#87) — except while editing, and an update that is waiting.
   const tucked = hm && !editMode && !moreOpen;
-  if (update) items.push(menuItem('update', `Install update ${update.version}`, updateBusy || `you have v${VERSION}`, () => { closeSheet(); askToUpdate(true); }, h('span', { class: 'lamp-dot on' })));
+  if (update) items.push(menuItem('update', `Install update ${update.version}`, updateBusy || `you have v${VERSION}`, () => { closeSheet(); askToUpdate(true); }, h('span', { class: 'lamp-dot green' })));
   // With the dashboard selector removed from this dashboard, the list of homes and dashboards is here (#103).
   if (hm && navHidden()) items.push(menuItem('grid', 'Homes and dashboards', titleText(), () => { openSheet = 'places'; renderSheet(); }, icon('chevron')));
   if (hm && !editMode) items.push(menuItem('gear', 'Settings and more', tucked ? 'integrations, edit, settings, requests' : null, () => { moreOpen = !moreOpen; renderSheet(); }, icon(moreOpen ? 'down' : 'chevron')));
@@ -1608,8 +1608,10 @@ function settingsSheet() {
 function updatesSettings() {
   const body = h('div', { class: 'menu settings' }, subHead('Updates and backup'));
   if (native.isNative) body.append(...nodes(
+    // First: whether the app looks for updates by itself (#126).
+    h('div', { class: 'menu-row' }, icon('update'), h('span', { class: 'grow' }, 'Check for updates automatically', h('span', { class: 'sub' }, device.autoUpdate !== false ? 'On: the app asks GitHub now and then' : 'Off: only when you tap Check for updates now')),
+      seg([[true, 'On'], [false, 'Off']], device.autoUpdate !== false, (v) => { device.autoUpdate = v; saveDevice(); if (v) checkForUpdate(); else { update = null; renderUpdate(); } renderSheet(); })),
     channelSettings(),
-    h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: device.autoUpdate !== false, onchange: (e) => { device.autoUpdate = e.target.checked; saveDevice(); if (device.autoUpdate) checkForUpdate(); else { update = null; renderUpdate(); } } }), 'Check for app updates (asks GitHub; the only internet use)'),
     h('div', { class: 'btns pad' }, h('button', { class: 'wide', onclick: async () => { await checkForUpdate(true); renderSheet(); } }, icon('update'), updateBusy || (update ? `Update ${update.version} is available` : 'Check for updates now'))),
     h('div', { class: 'msep' })));
   else body.append(...nodes(
@@ -2075,7 +2077,9 @@ function channelSettings() {
 // ---------- in-app updates (Android app only) ----------
 let update = null, updateBusy = '', updateError = '';
 function renderUpdate() {
-  updateChip.classList.toggle('hidden', !update || editor.active);
+  // A waiting update is a green dot on the More button (#126); More's first row installs it. No chip on the plan.
+  updateChip.classList.add('hidden');
+  document.querySelector('.more-btn')?.classList.toggle('has-update', !!update);
   updateChip.replaceChildren(icon('update'), h('span', {}, updateBusy || `Update ${update?.version || ''} · Install`));
   if (openSheet === 'more') renderSheet();
 }
@@ -2544,7 +2548,7 @@ native.onBackButton(() => {
 }, () => launcherEnabled /* as a home screen, Back never leaves */);
 if (native.isNative && device.keepAwake) native.setKeepScreenOn(true);
 view.refineEnabled = device.refine !== false;
-window.__nidorama = { view, editor, show, home, setEditMode: (on) => setEditMode(on), testUpdate: (u) => { update = u; askToUpdate(); } }; // handles for automated tests
+window.__nidorama = { view, editor, show, home, setEditMode: (on) => setEditMode(on), testUpdate: (u) => { update = u; renderUpdate(); askToUpdate(); } }; // handles for automated tests
 
 new ResizeObserver(() => view.resize()).observe(stage);
 onLibraryChange((why) => {

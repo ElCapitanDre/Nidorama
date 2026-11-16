@@ -1,6 +1,6 @@
 {
   "name": "nidorama",
-  "version": "0.23.0",
+  "version": "0.23.1",
   "private": true,
   "type": "module",
   "description": "Local-first floor-plan home controller for Home Assistant",

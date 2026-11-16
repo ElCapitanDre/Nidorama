@@ -968,3 +968,6 @@ textarea.yaml { font: 12px/1.45 ui-monospace, 'Roboto Mono', Menlo, monospace; w
 /* the ⋯ menu of a dashboard (#125) */
 .danger-item .menu-item, .danger-item button { color: var(--bad, #d64545); }
 .welcome .units-row { width: 100%; max-width: 360px; }
+/* a waiting update: a green glowing dot on the More button (#126) */
+.more-btn { position: relative; }
+.more-btn.has-update::after { content: ''; position: absolute; top: 6px; right: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--ok, #3cc46a); box-shadow: 0 0 8px var(--ok, #3cc46a); }
