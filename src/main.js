@@ -762,7 +762,7 @@ function renderWelcome() {
     h('h1', {}, 'Nidorama'),
     h('p', {}, 'Look down into a model of your home and tap the things in it. Draw your own plan, or load a home file.'),
     h('button', { class: 'wide primary', onclick: createHome }, icon('plus'), 'Create a home'),
-    h('button', { class: 'wide', onclick: sketchGuide }, icon('edit'), 'Make a plan from a paper sketch'),
+    h('button', { class: 'wide', onclick: () => sketchGuide() }, icon('edit'), 'Make a plan from a paper sketch'),
     h('button', { class: 'wide', onclick: () => fileInput.click() }, icon('file'), 'Import a home file, or restore a backup'),
     h('button', { class: 'wide ghost', onclick: () => { const hm = sampleHome(); ensureDemoEntities(); show({ homeId: hm.id, kind: 'level', id: hm.levels[0].id }); } }, icon('star'), 'Try the sample home')));
 }
