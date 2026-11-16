@@ -1,7 +1,7 @@
 # Changelog
 
 ## 0.23.0
-- Feet and inches: choose Metres or Feet and inches when you first open the app, or later in Settings → Look and feel. Homes keep their measurements either way.
+- Feet and inches: choose Metric or Imperial units when you first open the app, or later at the top of Settings. Homes keep their measurements either way.
 - Trying the sample home? More → Start my own home shows the ways to begin yours.
 - Edit homes and dashboards: each dashboard has one ⋯ button with all its actions, so the list fits on a phone.
 

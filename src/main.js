@@ -763,8 +763,8 @@ function renderWelcome() {
     h('img', { src: 'icon.svg', alt: '', width: 72, height: 72 }),
     h('h1', {}, 'Nidorama'),
     h('p', {}, 'Look down into a model of your home and tap the things in it. Draw your own plan, or load a home file.'),
-    h('div', { class: 'row units-row' }, h('div', { class: 'row-label' }, 'Measure in'),
-      seg([['metric', 'Metres'], ['imperial', 'Feet and inches']], app.units, (v) => { setUnits(v); renderWelcome(); })),
+    h('div', { class: 'row units-row' }, h('div', { class: 'row-label' }, 'Units'),
+      seg([['metric', 'Metric'], ['imperial', 'Imperial']], app.units, (v) => { setUnits(v); renderWelcome(); })),
     h('button', { class: 'wide primary', onclick: createHome }, icon('plus'), 'Create a home'),
     h('button', { class: 'wide', onclick: () => sketchGuide() }, icon('edit'), 'Make a plan from a paper sketch'),
     h('button', { class: 'wide', onclick: () => fileInput.click() }, icon('file'), 'Import a home file, or restore a backup'),
@@ -1513,8 +1513,6 @@ const subHead = (title) => h('div', { class: 'panel-head' },
 function lookSettings() {
   const L = level();
   return h('div', { class: 'menu settings' }, subHead('Look and feel'),
-    h('div', { class: 'menu-row' }, icon('edit'), h('span', { class: 'grow' }, 'Measure in', h('span', { class: 'sub' }, 'Sizes and lengths on this device. Homes keep their measurements whichever you choose.')),
-      seg([['metric', 'Metres'], ['imperial', 'Feet and inches']], app.units, (v) => { setUnits(v); renderSheet(); })),
     h('h3', { class: 'pad' }, 'Plan'),
     h('p', { class: 'hint' }, 'How a floor plan is drawn on this device: its materials, light and camera angle. It does not change what is in the plan.'),
     L ? [h('div', { class: 'menu-row' }, icon('layers'), h('span', { class: 'grow' }, 'Plan style'),
@@ -1580,6 +1578,8 @@ function settingsSheet() {
   const go = (pg) => () => { settingsPage = pg; renderSheet(); };
   const body = h('div', { class: 'menu settings' },
     h('div', { class: 'panel-head' }, h('h2', {}, 'Settings'), h('button', { class: 'round small', 'aria-label': 'Close', onclick: closeSheet }, icon('close'))),
+    h('div', { class: 'menu-row' }, icon('edit'), h('span', { class: 'grow' }, 'Units'),
+      seg([['metric', 'Metric'], ['imperial', 'Imperial']], app.units, (v) => { setUnits(v); renderSheet(); })),
     menuItem('star', 'Look and feel', 'plan style, theme, day / night, labels, title', go('look'), icon('chevron')),
     menuItem('home', 'Start-up and wall tablet', `default dashboard, screen, home screen, kiosk mode${kioskOn() ? ' (on)' : ''}`, go('launch'), icon('chevron')),
     menuItem('bell', 'Alerts', (device.alerts || []).filter((a) => a.on).length ? `${device.alerts.filter((a) => a.on).length} on this device` : 'tell me when something happens at home', go('alerts'), icon('chevron')),
