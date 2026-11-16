@@ -94,6 +94,8 @@ jobs:
       - name: Name the APK
         run: |
           cp android/app/build/outputs/apk/release/app-release.apk "Nidorama-${{ steps.v.outputs.tag }}.apk"
+          # The same file under a fixed name, so releases/latest/download/Nidorama.apk always gives the newest Stable build.
+          cp "Nidorama-${{ steps.v.outputs.tag }}.apk" Nidorama.apk
           # Any home files kept in homes/<name>/home.json are published beside the APK as examples.
           for f in homes/*/home.json; do [ -f "$f" ] && cp "$f" "$(basename "$(dirname "$f")").nidorama.json"; done; true
 
@@ -114,6 +116,7 @@ jobs:
           make_latest: false
           files: |
             Nidorama-*.apk
+            Nidorama.apk
             *.nidorama.json
           body: |
             <!-- nidorama:channel=${{ steps.v.outputs.channel }} requests=${{ steps.v.outputs.requests }} -->
