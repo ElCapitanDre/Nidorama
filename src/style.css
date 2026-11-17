@@ -1028,3 +1028,4 @@ textarea.yaml { font: 12px/1.45 ui-monospace, 'Roboto Mono', Menlo, monospace; w
   .modal.modelmaker { height: 94vh; }
   .mm-main { grid-template-columns: 1fr; grid-template-rows: minmax(220px, 40%) 1fr; }
 }
+.mm-readout { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); padding: 6px 12px; border-radius: 999px; background: #231a10d9; color: #fff; font-size: 13px; font-variant-numeric: tabular-nums; pointer-events: none; white-space: nowrap; }

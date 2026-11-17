@@ -137,3 +137,31 @@ export function scaleDraft(dr, axis, size) {
   for (const p of dr.parts) { p.min[axis] = m3(a + (p.min[axis] - a) * k); p.max[axis] = m3(a + (p.max[axis] - a) * k); }
   if (axis === 2 && dr.light) dr.light.z = m3(a + (dr.light.z - a) * k);
 }
+
+// ---------- dragging in the 3D view (phase 3) ----------
+/** The faces of every part except `skip` along one axis (0 x, 1 y, 2 z), and the floor for height: where a dragged face may snap. */
+export function edgesOf(dr, skip, axis) {
+  const out = axis === 2 ? [0] : [];
+  dr.parts.forEach((p, i) => { if (i !== skip) out.push(p.min[axis], p.max[axis]); });
+  return out;
+}
+/** `v` snapped to the nearest of `targets` within `tol` metres, else to the `step` grid. Returns [value, snappedToAPart]. */
+export function snapValue(v, targets, tol, step) {
+  let best = null, bd = tol;
+  for (const t of targets) { const d = Math.abs(t - v); if (d <= bd) { bd = d; best = t; } }
+  return best != null ? [m3(best), true] : [m3(Math.round(v / step) * step), false];
+}
+/** Part i moved by `delta` metres on one axis, snapping its nearer face to other parts (else its low face to the grid). */
+export function movePartAxis(dr, i, axis, delta, tol, step) {
+  const p = dr.parts[i], len = p.max[axis] - p.min[axis], lo = p.min[axis] + delta, hi = lo + len, targets = edgesOf(dr, i, axis);
+  const [sl, al] = snapValue(lo, targets, tol, step), [sh, ah] = snapValue(hi, targets, tol, step);
+  let start = sl;
+  if (ah && (!al || Math.abs(sh - hi) < Math.abs(sl - lo))) start = sh - len;
+  if (axis === 2) start = Math.max(0, start); // not through the floor
+  return { min: m3(start), max: m3(start + len), snapped: al || ah };
+}
+/** Part i with one face (`side` 'min' or 'max') dragged to `v` on one axis, snapping; never thinner than 5 mm. */
+export function resizePartFace(dr, i, axis, side, v, tol, step) {
+  const p = dr.parts[i], [s, snapped] = snapValue(v, edgesOf(dr, i, axis), tol, step);
+  return side === 'max' ? { min: p.min[axis], max: m3(Math.max(p.min[axis] + 0.005, s)), snapped } : { min: m3(Math.min(p.max[axis] - 0.005, s)), max: p.max[axis], snapped };
+}
