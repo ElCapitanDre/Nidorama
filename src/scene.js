@@ -30,9 +30,26 @@ export const STYLES = {
   plan: { label: 'Flat plan', camera: 'ortho', elevation: 90, cut: 0.25, mat: 'lambert', shadows: false },
   // Nido: conceptual tiles in deep greens, low walls, amber light, the other floors as faint layers.
   nido: { label: 'Nido', camera: 'persp', elevation: 52, cut: 0.35, mat: 'nido', shadows: false, layers: true, bg: ['#0F1412', '#0B0F0D'] },
+  // Nido conceptual: no walls at all, just the rooms as dark tiles with a gap between them, furniture as flat
+  // outlines, and every entity a coloured dot (drawn by the app over the plan).
+  nidoplan: { label: 'Nido conceptual', camera: 'persp', elevation: 60, cut: 0, mat: 'nido', shadows: false, layers: true, noWalls: true, tiles: true, flat: true, dots: true, bg: ['#0F1412', '#0B0F0D'] },
   blueprint: { label: 'Blueprint', camera: 'ortho', elevation: 90, cut: 0.25, mat: 'blueprint', shadows: false, bg: ['#1b4e8f', '#0d2c55'] },
 };
 const WALL = { top: '#fffdf9', side: '#e3dcd2' };
+/** The polygon moved in by `d` metres on every side (for the gap between Nido conceptual tiles). */
+function insetPoly(poly, d) {
+  let area = 0;
+  for (let i = 0; i < poly.length; i++) { const a = poly[i], b = poly[(i + 1) % poly.length]; area += a[0] * b[1] - b[0] * a[1]; }
+  const s = area > 0 ? 1 : -1, n = poly.length;
+  const normal = (a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1; return [(-dy / l) * s, (dx / l) * s]; }; // pointing inwards
+  return poly.map((p, i) => {
+    const n1 = normal(poly[(i - 1 + n) % n], p), n2 = normal(p, poly[(i + 1) % n]);
+    let bx = n1[0] + n2[0], by = n1[1] + n2[1];
+    const bl = Math.hypot(bx, by) || 1; bx /= bl; by /= bl;
+    const k = Math.min(3, 1 / Math.max(0.35, bx * n1[0] + by * n1[1]));
+    return [p[0] + bx * d * k, p[1] + by * d * k];
+  });
+}
 const WARM = new THREE.Color('#ffb468');
 const MAX_POINT_LIGHTS = 10;
 const REFINE_SAMPLES = 48;
@@ -186,12 +203,12 @@ export class NidoramaScene {
     this._buildEnvironment();
     if (level.site) this._buildSite();
     this._buildFloors();
-    this._buildWalls();
+    if (!this.style.noWalls) this._buildWalls();
     this._buildStairs();
     this._buildObjects();
     this._buildLights();
     this._buildRooms();
-    if (!level.site) this._buildPieces(level, 0, true);
+    if (!level.site && !this.style.noWalls) this._buildPieces(level, 0, true);
     if (this.style.layers && !level.site) this._buildLayers(level);
     for (const [id, on, lvl] of lightStates) this.setLight(id, on, lvl, true);
     this.setNight(this.night);
@@ -392,6 +409,15 @@ export class NidoramaScene {
       this._add(m, { cast: false });
     };
     const isVoid = (r) => FLOOR_MATERIALS[r.floor]?.kind === 'void';
+    if (this.style.tiles) { // Nido conceptual: each room a flat dark tile, a little in from its walls
+      for (const r of L.rooms) {
+        if (isVoid(r) || r.polygon.length < 3) continue;
+        const m = flatPolygon(insetPoly(r.polygon, 0.07), r.outdoor ? -0.01 : 0, new THREE.MeshBasicMaterial({ color: r.outdoor ? '#141A17' : '#1A211E' }));
+        m.userData.room = r.id;
+        this._add(m, { cast: false });
+      }
+      return;
+    }
     for (const r of L.rooms) {
       if (isVoid(r) || r.polygon.length < 3) continue;
       addPoly(r.polygon, r.floor, r.outdoor ? -0.02 : r.floorPainted || r.floorPhoto ? 0.012 : 0, r.floorPhoto, r.id);
@@ -610,6 +636,18 @@ export class NidoramaScene {
       g.rotation.y = -THREE.MathUtils.degToRad(o.rotation || 0);
       this.scene.add(g);
       const bulbs = [];
+      if (this.style.flat) { // Nido conceptual: furniture as a low outlined block over its footprint
+        const w = b.max[0] - b.min[0], d = b.max[1] - b.min[1];
+        if (w > 0.01 && d > 0.01) {
+          const m = new THREE.Mesh(new THREE.BoxGeometry(w * 0.94, 0.03, d * 0.94), new THREE.MeshBasicMaterial({ color: '#232C28', polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }));
+          m.position.y = 0.03;
+          g.add(m);
+          this._edges(m);
+        }
+        g.userData = { object: o, bulbs };
+        this.objects.set(o.id, g);
+        continue;
+      }
       const model = o.model ? this._model(o.model.id) : null;
       if (model) {
         // An imported 3D model (a scan of the real thing): scaled to fit the object's box, standing on its base.
@@ -670,27 +708,29 @@ export class NidoramaScene {
         pos = [c[0], c[1], 2.2];
       } else pos = l.position;
       let glow = null;
-      if (l.kind !== 'ceiling') {
+      if (l.kind !== 'ceiling' && !this.style.dots) {
         glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.glowTex, transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending, opacity: 0 }));
         glow.scale.set(1.2, 1.2, 1);
         glow.position.copy(V(pos[0], pos[1], pos[2] + 0.1));
         glow.renderOrder = 10;
         this.scene.add(glow);
       }
-      this.lights.set(l.id, { def: l, pos, glow, fixture: l.fixture ? this.objects.get(l.fixture) : null, on: false, level: 0 });
+      const room = l.room || this.level.rooms.find((r) => r.polygon.length > 2 && pointInPoly(pos, r.polygon))?.id;
+      this.lights.set(l.id, { def: l, pos, room, glow, fixture: l.fixture ? this.objects.get(l.fixture) : null, on: false, level: 0 });
     }
   }
 
   _buildRooms() {
     for (const r of this.level.rooms) {
       if (r.polygon.length < 3) continue;
-      const z = r.outdoor ? -0.01 : 0.02;
+      const z = r.outdoor ? -0.01 : 0.02, poly = this.style.tiles ? insetPoly(r.polygon, 0.07) : r.polygon;
       const sel = this.selection, pat = sel && sel.style !== 'glow' ? this._selTexture(sel.style) : null;
-      const tint = flatPolygon(r.polygon, z, new THREE.MeshBasicMaterial({ color: sel?.color || (this.style.mat === 'blueprint' ? '#9cc4ff' : this.style.mat === 'cyber' ? '#ff3df2' : this.style.mat === 'nido' ? '#F2B544' : '#ffd9a8'), map: pat, transparent: true, opacity: 0, depthWrite: false }));
+      const tint = flatPolygon(poly, z, new THREE.MeshBasicMaterial({ color: sel?.color || (this.style.mat === 'blueprint' ? '#9cc4ff' : this.style.mat === 'cyber' ? '#ff3df2' : this.style.mat === 'nido' ? '#F2B544' : '#ffd9a8'), map: pat, transparent: true, opacity: 0, depthWrite: false }));
       tint.renderOrder = 2;
       tint.userData.room = r.id;
       tint.userData.overlay = true;
-      const wash = flatPolygon(r.polygon, z + 0.005, new THREE.MeshBasicMaterial({ color: WARM, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+      const wash = flatPolygon(poly, z + 0.005, this.style.tiles ? new THREE.MeshBasicMaterial({ color: this.washColor || '#F2B544', transparent: true, opacity: 0, depthWrite: false })
+        : new THREE.MeshBasicMaterial({ color: WARM, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
       wash.renderOrder = 3;
       wash.userData.overlay = true;
       wash.userData.room = r.id;
@@ -725,7 +765,7 @@ export class NidoramaScene {
         root.add(lg);
         this.scene = lg; this.level = level; this.simple = !level.footprint;
         const before = new Set(this.lights.keys());
-        this._buildFloors(); this._buildWalls(); this._buildStairs(); this._buildObjects(); this._buildLights(); this._buildRooms();
+        this._buildFloors(); if (!this.style.noWalls) this._buildWalls(); this._buildStairs(); this._buildObjects(); this._buildLights(); this._buildRooms();
         if (peel === 'all') this._buildPieces(level, 0);
         root.updateMatrixWorld(true);
         for (const [id, rec] of this.lights) if (!before.has(id)) { const w = lg.localToWorld(V(rec.pos[0], rec.pos[1], rec.pos[2])); rec.pos = [w.x, w.z, w.y]; }
@@ -1117,10 +1157,15 @@ export class NidoramaScene {
         m.material.emissive.set(l.on ? WARM : '#000');
         m.material.emissiveIntensity = k * (rich ? 2.2 : 0.9);
       }
-      if (l.def.kind === 'ceiling') {
+      if (l.def.kind === 'ceiling' && !this.style.tiles) {
         const room = this.rooms.get(l.def.room);
         if (room) room.wash.material.opacity = k * (this.night ? 0.22 : 0.08);
       }
+    }
+    if (this.style.tiles) { // Nido conceptual: a room is washed amber while any light in it is on
+      const most = new Map();
+      for (const l of this.lights.values()) if (l.on && l.room) most.set(l.room, Math.max(most.get(l.room) || 0, Math.max(0.3, l.level)));
+      for (const [id, room] of this.rooms) { room.wash.material.opacity = (most.get(id) || 0) * 0.16; if (this.washColor) room.wash.material.color.set(this.washColor); }
     }
   }
 

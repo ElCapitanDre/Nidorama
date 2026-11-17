@@ -4,7 +4,7 @@
 //
 // A theme only ever holds colours and a few fixed choices, never CSS, so a theme file from
 // someone else cannot do anything but restyle.
-import { h, nodes, icon, seg, modal, pickFile } from './ui.js';
+import { h, nodes, icon, seg, modal, pickFile, domainOf } from './ui.js';
 import { device, saveDevice } from './store.js';
 import { upgradeFile } from './legacy.js';
 
@@ -48,6 +48,14 @@ const BUILTIN = [
 export const themeList = () => [...BUILTIN, ...(device.themes || [])];
 export const themeById = (id) => themeList().find((t) => t.id === id) || BUILTIN[0];
 const current = () => themeById(device.theme);
+/** Nido: the colour of an entity's dot on the plan, by kind; each can be changed in Look and feel. */
+export const DOT_KINDS = [['light', 'Lights', '#F2B544'], ['heat', 'Heating', '#FF7A45'], ['fan', 'Fans and air', '#5FC4B0'], ['blind', 'Blinds and covers', '#8FB3FF'], ['lock', 'Locks and doors', '#C9A7FF'], ['other', 'Everything else', '#E6EBE7']];
+export const dotColour = (kind) => device.nidoDots?.[kind] || (DOT_KINDS.find((k) => k[0] === kind) || DOT_KINDS[5])[2];
+const DOT_DOMAINS = { light: 'light', climate: 'heat', water_heater: 'heat', fan: 'fan', humidifier: 'fan', cover: 'blind', lock: 'lock' };
+/** Which kind of dot an entity gets. */
+export const dotKindOf = (entity) => DOT_DOMAINS[domainOf(entity || '')] || 'other';
+/** The Nido highlight colour: the theme's amber unless the person picked their own. */
+const accentOf = (t) => (t.id === 'nido' && HEX.test(device.nidoAccent || '') ? device.nidoAccent : t.accent);
 
 /** Check a theme from a file (or storage) and keep only what a theme may hold. Throws if it is not one. */
 export function cleanTheme(raw) {
@@ -113,8 +121,8 @@ export const glassy = (t) => t.id === 'frost' || t.id === 'jack';
  */
 export function applyTheme(force = false) {
   const t = current(), night = document.documentElement.classList.contains('night');
-  const key = `${t.id}:${night}:${glassy(t) ? JSON.stringify(look(night)) : ''}:${t.builtin ? '' : JSON.stringify(t)}`;
-  const sel = t.id === 'original' ? null : t.selection;
+  const key = `${t.id}:${night}:${t.id === 'nido' ? accentOf(t) : ''}:${glassy(t) ? JSON.stringify(look(night)) : ''}:${t.builtin ? '' : JSON.stringify(t)}`;
+  const sel = t.id === 'original' ? null : t.id === 'nido' ? { ...t.selection, color: accentOf(t) } : t.selection;
   if (key === applied && !force) return sel;
   applied = key;
   const st = document.documentElement.style;
@@ -127,7 +135,8 @@ export function applyTheme(force = false) {
   document.documentElement.dataset.pages = t.pages || '';
   if (t.id === 'original') return sel;
   const m = night ? t.night : t.day, L = look(night), dim = night && !ownNight(); // a Night look of the person's own is shown as they made it
-  const set = { '--accent': t.accent, '--accent-soft': `color-mix(in srgb, ${t.accent} 82%, #fff)`, '--on-accent': lum(t.accent) > 0.5 ? '#231a10' : '#ffffff',
+  const acc = accentOf(t);
+  const set = { '--accent': acc, '--accent-soft': `color-mix(in srgb, ${acc} 82%, #fff)`, '--on-accent': lum(acc) > 0.5 ? '#231a10' : '#ffffff',
     '--bg': m.bg, '--panel': `${m.panel}${t.glass ? 'b8' : 'ee'}`, '--ink': m.ink, '--muted': `color-mix(in srgb, ${m.ink} 62%, ${m.panel})`, '--line': `color-mix(in srgb, ${m.ink} 11%, transparent)`,
     '--chip': `color-mix(in srgb, ${m.panel} 90%, ${m.ink})`, '--radius': `${t.radius}px`, 'color-scheme': lum(m.panel) < 0.45 ? 'dark' : 'light', 'font-family': FONTS[t.font][1] };
   if (glassy(t)) Object.assign(set, { // real glass: nearly clear, over the chosen background (dimmed a little at night)
@@ -135,7 +144,7 @@ export function applyTheme(force = false) {
     '--line': 'rgba(255, 255, 255, 0.26)', '--chip': 'rgba(40, 42, 80, 0.36)', '--on-accent': '#1c1c2e', 'color-scheme': 'dark',
     '--glass': String(L.frost?.glass ?? 0.15), '--glass-btn': String(L.frost?.buttons ?? 0.34), '--wtext': String(L.frost?.text ?? 1) });
   if (t.id === 'jack') Object.assign(set, { '--chip': 'rgba(18, 18, 22, 0.42)', '--on-accent': '#1a1a1e', '--accent-soft': '#ffe7ad', '--bg': dim && L.wallpaper ? `linear-gradient(#00000055, #00000055), ${wallpaper(L, night)}` : !night && (!L.wallpaper || L.wallpaper === 'sand') ? `linear-gradient(#2a1f1038, #2a1f1038), ${wallpaper(L, night)}` : wallpaper(L, night) });
-  if (t.id === 'nido') Object.assign(set, { '--muted': '#9AA59F', '--line': '#26302C', '--chip': '#1A211E', '--on-accent': '#0F1412', '--accent-soft': '#F2B544', '--ok': '#5FC4B0', 'color-scheme': 'dark' });
+  if (t.id === 'nido') Object.assign(set, { '--muted': '#9AA59F', '--line': '#26302C', '--chip': '#1A211E', '--on-accent': '#0F1412', '--on-accent': lum(acc) > 0.5 ? '#0F1412' : '#ffffff', '--accent-soft': acc, '--ok': '#5FC4B0', 'color-scheme': 'dark' });
   for (const [k, v] of Object.entries(set)) st.setProperty(k, v);
   return sel;
 }
@@ -212,5 +221,18 @@ export function themeSettings({ changed, saveText }) {
     t.id !== 'original' ? h('div', { class: 'btns pad' },
       h('button', { class: 'wide ghost', onclick: () => saveText(`${t.name.replace(/[^\w-]+/g, '-').toLowerCase() || 'theme'}.nidorama-theme.json`, JSON.stringify({ schema: 'nidorama.theme/1', ...cleanTheme({ ...BASE, ...t }) }, null, 1)) }, icon('file'), 'Save as a file'),
       custom ? h('button', { class: 'wide ghost danger', onclick: () => { if (confirm(`Delete the theme "${t.name}"?`)) { device.themes = device.themes.filter((x) => x.id !== t.id); pick('original'); } } }, icon('trash'), 'Delete') : null) : null,
+    t.id === 'nido' ? nidoColours(changed) : null,
   ];
+}
+
+/** Nido: the highlight colour (selected buttons and layers) and the colour of each kind of entity dot. */
+function nidoColours(changed) {
+  const save = () => { saveDevice(); applied = ''; changed(); };
+  const row = (label, value, onpick, reset) => h('div', { class: 'menu-row' }, h('span', { class: 'grow' }, label),
+    reset ? h('button', { class: 'chip small', onclick: () => { reset(); save(); } }, 'Reset') : null,
+    h('span', { class: 'colbtn' }, h('input', { type: 'color', value, 'aria-label': label, onchange: (e) => { onpick(e.target.value); save(); } })));
+  return h('details', { class: 'nido-colours' }, h('summary', {}, 'Nido colours', h('span', { class: 'sub' }, 'highlight and entity dots')),
+    row('Highlight', accentOf(current()), (v) => (device.nidoAccent = v), device.nidoAccent ? () => delete device.nidoAccent : null),
+    ...DOT_KINDS.map(([k, label]) => row(`${label} dots`, dotColour(k), (v) => ((device.nidoDots ||= {})[k] = v), device.nidoDots?.[k] ? () => delete device.nidoDots[k] : null)),
+    h('p', { class: 'hint' }, 'A single entity\'s dot can have its own colour: in edit mode, select it and pick its dot colour.'));
 }

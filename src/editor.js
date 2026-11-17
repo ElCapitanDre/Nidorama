@@ -14,6 +14,7 @@ import { snap, round, dist, distToSeg, pointInPoly, pointInObject, objectCorners
 import { thumb } from './thumbs.js';
 import { FINISHES, SWATCHES, finishName, finishColor } from './finishes.js';
 import { haDashboards, frameGuide, insideHA } from './webpanel.js';
+import { dotColour, dotKindOf } from './themes.js';
 import { boundsOf, ROOF_TYPES, ROOF_MATERIALS, MAX_FLOOR, floorName, planLevels, placeOf, floorOf, floorsOf, piecesOf, pieceCorners, newPiece, outlineBox, outsideCorners, toSite, fromSite, across, floorBelow } from './site.js';
 
 const rot = (v, deg) => { const r = (deg * Math.PI) / 180, c = Math.cos(r), sn = Math.sin(r); return [v[0] * c - v[1] * sn, v[0] * sn + v[1] * c]; };
@@ -1082,10 +1083,12 @@ export class Editor {
       lights.length
         ? lights.map((l) => [
           entityField(lights.length > 1 ? `Light: ${l.name}` : 'Light entity (its glow on the plan)', l.entity, (v) => this.change((lv) => (lv.lights.find((q) => q.id === l.id).entity = v)), ['light', 'switch']),
-          textField('Name in the room panel', l.name, (v) => this.change((lv) => (lv.lights.find((q) => q.id === l.id).name = v)))]).concat([
+          textField('Name in the room panel', l.name, (v) => this.change((lv) => (lv.lights.find((q) => q.id === l.id).name = v))),
+          l.entity ? this.dotRow(l.dot, 'light', (v) => this.change((lv) => { const x = lv.lights.find((q) => q.id === l.id); if (v) x.dot = v; else delete x.dot; })) : null]).concat([
           h('button', { class: 'wide ghost', onclick: () => this.change((lv) => { const ob = lv.objects.find((q) => q.id === o.id); const first = lv.lights.find((q) => q.fixture === o.id); if (first?.entity && !ob.entity) ob.entity = first.entity; lv.lights = lv.lights.filter((q) => q.fixture !== o.id); }) }, icon('bulb'), 'Stop being a light (keep its entity)')])
         : [
           entityField('Entity (tap toggles, hold for details)', o.entity || '', (v) => edit((lv, ob) => (v ? (ob.entity = v) : delete ob.entity))),
+          o.entity ? this.dotRow(o.dot, dotKindOf(o.entity), (v) => edit((lv, ob) => { if (v) ob.dot = v; else delete ob.dot; })) : null,
           h('button', { class: 'wide ghost', onclick: () => this.change((lv) => lv.lights.push({ id: uid('light'), name: o.name, room: o.room, fixture: o.id, position: [...centreOf(o), round(b.max[2])], entity: o.entity || '', dimmable: true })) }, icon('bulb'), 'Make this a light (glows, dims)')],
       h('div', { class: 'msep' }),
       this.gesturesPanel(o, lights[0]?.entity || o.entity || '', (fn) => edit((lv, ob) => fn(ob))),
@@ -1432,11 +1435,18 @@ export class Editor {
     ];
   }
 
+  /** Nido styles: the colour of this entity's dot on the plan. Only here, in edit mode: on the plan, tap and hold keep their actions. */
+  dotRow(own, kind, set) {
+    return h('div', { class: 'row' }, h('div', { class: 'row-label' }, h('div', {}, 'Dot colour'), h('div', { class: 'sub' }, own ? 'its own colour, in the Nido styles' : 'as set for its kind in Look and feel')),
+      own ? h('button', { class: 'chip small', onclick: () => set(null) }, 'Default') : null,
+      h('span', { class: 'colbtn' }, h('input', { type: 'color', value: own || dotColour(kind), 'aria-label': 'Dot colour', onchange: (e) => set(e.target.value) })));
+  }
   lightInspector(l) {
     const edit = (fn) => this.change((lv) => fn(lv.lights.find((q) => q.id === l.id)));
     return h('div', { class: 'stack' },
       textField('Light name', l.name, (v) => edit((x) => (x.name = v))),
       entityField('Entity', l.entity, (v) => edit((x) => (x.entity = v)), ['light', 'switch']),
+      l.entity ? this.dotRow(l.dot, 'light', (v) => edit((x) => { if (v) x.dot = v; else delete x.dot; })) : null,
       l.position ? numField('Height', l.position[2], (v) => edit((x) => (x.position[2] = v)), { min: 0, max: 10 }) : null,
       h('div', { class: 'msep' }),
       this.gesturesPanel(l, l.entity, (fn) => edit((x) => fn(x))),

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.25.0
+- Nido theme: the dashboard selector opens in place as your home's layers, floors top first, then widget dashboards and other homes
+- Nido conceptual: a new plan style with no walls, just rooms as tiles, furniture as outlines and lit rooms washed in amber
+- Every entity on the plan is a dot in both Nido styles, glowing while it is on
+- Pick a colour for each kind of dot, and the highlight colour, in Look and feel → Nido colours
+- Give a single entity its own dot colour in edit mode; tap and hold on the plan keep their actions
+
 ## 0.24.0
 - Nido: a new theme and plan style, with your floors shown as layers
 - Smooth moves between the whole site and its levels

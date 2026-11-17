@@ -30,7 +30,7 @@ import { librarySettings, measureGLB } from './modelpicker.js';
 import { isGLB } from './gltf.js';
 import { moreItems, controlRow, menuEditor, addShortcut } from './menus.js';
 import { uid } from './catalog.js';
-import { themeList, themeById, applyTheme, themeSettings, WALLPAPERS, setWallPhoto, ownNight } from './themes.js';
+import { themeList, themeById, applyTheme, themeSettings, WALLPAPERS, setWallPhoto, ownNight, dotColour, dotKindOf } from './themes.js';
 import { shrinkPhoto } from './blobs.js';
 import { findUpdate, buildOf, CHANNELS, NEXT, BUILT_FOR, listBuilds, latestIn, promote, acceptedBy } from './updates.js';
 import { requestsRepo, setRequestsRepo, listRequests, sendRequest, isOwner, approve, unapprove, decline, TARGETS, editRequest, vote, unvote, NEW_ISSUE_URL, AREAS, areaName, shrinkScreenshot, attachScreenshot, screenshotsOf } from './requests.js';
@@ -64,9 +64,16 @@ const backdrop = h('img', { class: 'backdrop hidden', alt: '' });
 const photoNote = h('div', { class: 'photo-note hidden' });
 const dock = h('div', { class: 'dock hidden' });
 const freeLayer = h('div', { class: 'free-btns' });
-const stage = h('div', { class: 'stage' }, backdrop, canvas, labels, planBtns, bubble, photoNote);
+const dotLayer = h('div', { class: 'ent-dots' }); // Nido styles: every entity on the plan as a coloured dot
+const stage = h('div', { class: 'stage' }, backdrop, canvas, dotLayer, labels, planBtns, bubble, photoNote);
 const pageHost = h('div', { class: 'page-host hidden' });
-const navBtn = h('button', { class: 'chip nav-chip', onclick: () => { if (!navBtn.classList.contains('single')) toggleSheet('places'); } });
+const navBtn = h('button', { class: 'chip nav-chip', onclick: () => {
+  if (navBtn.classList.contains('single')) return;
+  // The Nido theme: the selector opens in place as the home's layers; elsewhere, and in edit mode, the sheet.
+  if (nidoTheme() && !editMode && home()) { layersOpen = !layersOpen; renderNav(); renderLayers(); } else toggleSheet('places');
+} });
+const nidoTheme = () => document.documentElement.classList.contains('nido');
+let layersOpen = false;
 const editBar = h('div', { class: 'edit-bar hidden' });
 const navEye = h('button', { class: 'round small nav-eye hidden', onclick: () => {
   const d = level() || page();
@@ -85,7 +92,8 @@ const scrim = h('div', { class: 'scrim hidden', onclick: () => closeSheet() });
 const dimmer = h('div', { class: 'dimmer hidden' });
 const updateChip = h('button', { class: 'chip update-chip hidden', onclick: () => askToUpdate(true) });
 const fileInput = h('input', { type: 'file', class: 'hidden' }); // any file: a backup kept in a storage app is often not labelled as JSON
-const layersBox = h('nav', { class: 'nido-layers hidden', 'aria-label': 'Levels' }); // Nido: the home's floors as layers (renderLayers)
+const layersBox = h('nav', { class: 'nido-layers hidden', 'aria-label': 'Homes and dashboards' }); // Nido: the selector, opened (renderLayers)
+document.addEventListener('pointerdown', (e) => { if (layersOpen && !layersBox.contains(e.target) && !navBtn.contains(e.target)) { layersOpen = false; renderNav(); renderLayers(); } });
 root.append(h('main', { class: 'plan-area' }, stage, pageHost, freeLayer, topbar, dock, layersBox, viewCtl, updateChip, editBar), panelBox, scrim, sheet, dimmer, fileInput);
 
 const view = new NidoramaScene(canvas);
@@ -259,6 +267,7 @@ function syncFromStates() {
       if (changed) { view._assignLights(); view.requestRender(); }
     }
     refreshButtons();
+    paintDots();
     if (sliding.active) return;
     if (page()) renderPageView();
     else if (!editor.active) renderPanel();
@@ -301,6 +310,8 @@ function applyDayNight() {
 setInterval(applyDayNight, 60000);
 
 // ---------- navigation ----------
+/** A home's first dashboard: its first widget page, else its first plan. */
+const firstViewOf = (hm) => (hm.pages?.[0] ? { homeId: hm.id, kind: 'page', id: hm.pages[0].id } : { homeId: hm.id, kind: 'level', id: hm.levels[0]?.id });
 function firstView() {
   for (const hm of lib.homes) {
     if (hm.pages?.[0]) return { homeId: hm.id, kind: 'page', id: hm.pages[0].id };
@@ -395,7 +406,12 @@ function renderNav() {
   navEye.title = navEye.getAttribute('aria-label');
   navEye.replaceChildren(icon(navHidden() ? 'eyeoff' : 'eye'));
   navBtn.classList.toggle('single', single && !editMode);
-  navBtn.replaceChildren(...nodes(icon(cur?.kind === 'page' ? 'grid' : 'plan'), h('span', {}, titleText()), editMode ? icon('edit') : single ? null : icon('down')));
+  const nido = nidoTheme() && !editMode && home();
+  navBtn.classList.toggle('nido-nav', !!nido);
+  navBtn.classList.toggle('open', !!nido && layersOpen);
+  navBtn.setAttribute('aria-expanded', String(!!nido && layersOpen));
+  const lead = nido && level() ? (level().site ? icon('home') : layerMark(layerPos(level()), true)) : icon(cur?.kind === 'page' ? 'grid' : 'plan');
+  navBtn.replaceChildren(...nodes(lead, h('span', {}, nido ? (level() || page())?.name || titleText() : titleText()), editMode ? icon('edit') : single ? null : icon(nido && layersOpen ? 'up' : 'down')));
 }
 
 let labelEls = [];
@@ -406,10 +422,47 @@ function buildLabels() {
     labels.append(el);
     return { r, el };
   });
+  buildDots();
+}
+// ---------- Nido styles: every entity on the plan as a dot, glowing while it is on ----------
+// The dots only show; taps and holds go through them to the thing underneath, which keeps its own actions.
+let dotEls = [];
+const dotsShown = () => !editor.active && (view.styleId === 'nido' || view.styleId === 'nidoplan');
+function buildDots() {
+  const L = level(), list = [];
+  if (L && dotsShown() && view.level === L) {
+    const fixtures = new Set();
+    for (const rec of view.lights.values()) {
+      if (rec.def.fixture) fixtures.add(rec.def.fixture);
+      if (rec.def.entity) list.push({ x: rec.pos[0], y: rec.pos[1], room: rec.room, def: rec.def, light: rec.def, kind: 'light' });
+    }
+    for (const o of L.objects) {
+      if (!o.entity || fixtures.has(o.id)) continue;
+      const b = o.bounds;
+      list.push({ x: (b.min[0] + b.max[0]) / 2, y: (b.min[1] + b.max[1]) / 2, room: o.room, def: o, kind: dotKindOf(o.entity) });
+    }
+  }
+  for (const d of list) d.el = h('div', { class: 'ent-dot', 'aria-hidden': 'true' });
+  dotEls = list;
+  dotLayer.replaceChildren(...list.map((d) => d.el));
+  paintDots();
+  positionLabels();
+}
+function paintDots() {
+  for (const d of dotEls) {
+    const on = isOn(st(d.light ? effectiveEntity(d.light) : d.def.entity));
+    d.el.style.setProperty('--dot', d.def.dot || dotColour(d.kind));
+    d.el.classList.toggle('on', on);
+  }
 }
 const applyLabels = () => labels.classList.toggle('hidden', device.labels === false);
 applyLabels();
 function positionLabels() {
+  for (const d of dotEls) {
+    const [x, y] = view.project(d.x, d.y, 0.05);
+    d.el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
+    d.el.classList.toggle('hidden', (!!view.isolated && d.room !== view.isolated) || !view.shows(d.x, d.y));
+  }
   for (const { b, el } of planBtnEls) { const [x, y] = view.project(b.at[0], b.at[1], 0.02); el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`; el.classList.toggle('hidden', !view.shows(b.at[0], b.at[1])); }
   for (const { r, el } of labelEls) {
     el.classList.toggle('hidden', !!view.isolated && r.id !== view.isolated);
@@ -1371,27 +1424,42 @@ function placeFree(el, p) {
   Object.assign(el.style, { left: p.h === 'l' ? `${p.x}px` : '', right: p.h === 'r' ? `${p.x}px` : '', top: p.v === 't' ? `${p.y}px` : '', bottom: p.v === 'b' ? `${p.y}px` : '' });
 }
 /** The strip under the top bar (the user's own menus, then this level's buttons that have no place of their own), and the buttons placed around the plan. */
-/** Nido plan style: the home's floors as a list of layers over the plan, each with its layers mark; tap one to go there. */
+/** The Nido theme: the dashboard selector, opened in place as the home's layers. Floors top first, each with its layers
+ *  mark; then the widget dashboards; then the other homes. Tap one to go there. */
 // The layers mark with one of its three sheets lit: top for the highest floor, bottom for the ground floor.
 const layerMark = (pos, on) => {
-  const one = (d, me) => `<path d="${d}" fill="${me && pos === 'top' && on ? '#F2B544' : 'none'}" stroke="${me ? (on ? '#F2B544' : '#5FC4B0') : '#3A4642'}" stroke-width="1.6" stroke-linejoin="round"/>`;
+  const one = (d, me) => `<path d="${d}" style="fill:${me && pos === 'top' && on ? 'var(--accent)' : 'none'};stroke:${me ? (on ? 'var(--accent)' : 'var(--ok, #5FC4B0)') : '#3A4642'}" stroke-width="1.6" stroke-linejoin="round"/>`;
   const el = document.createElement('span');
   el.innerHTML = `<svg width="22" height="22" viewBox="0 0 26 26" aria-hidden="true">${one('M13 3 24 9 13 15 2 9z', pos === 'top')}${one('M2 13.5 13 19.5 24 13.5', pos === 'mid')}${one('M2 18 13 24 24 18', pos === 'low')}</svg>`;
   return el.firstChild;
 };
+/** Where a floor sits among its home's floors: top, mid or low (for its layers mark). */
+function layerPos(x) {
+  const floors = (home()?.levels || []).filter((q) => !q.site && !q.roof).map((q) => q.floor || 0);
+  const f = x.floor || 0, top = Math.max(...floors, 0), low = Math.min(...floors, 0);
+  return f === top && top !== low ? 'top' : f === low ? 'low' : 'mid';
+}
 function renderLayers() {
-  const hm = home(), L = level();
-  const show = !!(hm && L && !editor.active && view.styleId === 'nido');
-  const list = show ? hm.levels.filter((x) => !x.roof && !x.hideList || x === L).sort((a, b) => (b.site ? 99 : (b.floor || 0)) - (a.site ? 99 : (a.floor || 0))) : [];
-  layersBox.classList.toggle('hidden', list.length < 2);
-  if (list.length < 2) return void layersBox.replaceChildren();
-  const floors = list.filter((x) => !x.site);
-  const top = Math.max(...floors.map((x) => x.floor || 0)), low = Math.min(...floors.map((x) => x.floor || 0));
-  layersBox.replaceChildren(...list.map((x) => {
-    const on = x === L, f = x.floor || 0, pos = f === top && top !== low ? 'top' : f === low ? 'low' : 'mid';
-    return h('button', { class: on ? 'on' : '', 'aria-current': on ? 'page' : 'false', onclick: () => { if (!on) show_({ homeId: hm.id, kind: 'level', id: x.id }); } },
-      x.site ? icon('home') : layerMark(pos, on), h('span', {}, x.name));
-  }));
+  const hm = home();
+  const open = !!(hm && layersOpen && nidoTheme() && !editMode && !editor.active);
+  layersBox.classList.toggle('hidden', !open);
+  if (!open) return void layersBox.replaceChildren();
+  const here = (kind, id) => cur?.homeId === hm.id && cur.kind === kind && cur.id === id;
+  const go = (t) => { layersOpen = false; renderNav(); renderLayers(); show(t); };
+  const item = (on, mark, name, t, sub) => h('button', { class: on ? 'on' : '', 'aria-current': on ? 'page' : 'false', onclick: () => { if (on) { layersOpen = false; renderNav(); renderLayers(); } else go(t); } }, mark, h('span', {}, name, sub ? h('small', {}, sub) : null));
+  const levels = hm.levels.filter((x) => !x.roof && (!x.hideList || here('level', x.id))).sort((a, b) => (b.site ? 99 : (b.floor || 0)) - (a.site ? 99 : (a.floor || 0)));
+  const pages = (hm.pages || []).filter((p) => !p.hideList || here('page', p.id));
+  const kids = levels.map((x) => item(here('level', x.id), x.site ? icon('home') : layerMark(layerPos(x), here('level', x.id)), x.name, { homeId: hm.id, kind: 'level', id: x.id }, x.site ? null : floorName(x.floor || 0)));
+  if (pages.length) kids.push(h('div', { class: 'layers-sep' }));
+  for (const p of pages) kids.push(item(here('page', p.id), icon('grid'), p.name, { homeId: hm.id, kind: 'page', id: p.id }));
+  const others = lib.homes.filter((x) => x !== hm);
+  if (others.length) {
+    kids.push(h('div', { class: 'layers-sep' }));
+    for (const o of others) kids.push(item(false, icon('home'), o.name, firstViewOf(o), 'another home'));
+  }
+  layersBox.replaceChildren(...kids);
+  const r = navBtn.getBoundingClientRect(), pa = planArea().getBoundingClientRect();
+  Object.assign(layersBox.style, { left: `${Math.round(r.left - pa.left)}px`, top: `${Math.round(r.bottom - pa.top + 6)}px` });
 }
 const show_ = (t) => show(t);
 function renderDock() {
@@ -1509,7 +1577,8 @@ const STYLE_ABOUT = {
   clay: 'Everything in one pale clay colour, like an architect\'s model.',
   plan: 'A flat plan seen from straight above.',
   blueprint: 'White lines on blue, from straight above.',
-  nido: 'Conceptual: rooms as soft dark tiles, amber where lights are on, and the other floors drawn faintly as layers.',
+  nido: 'Conceptual: rooms as soft dark tiles with low walls, every entity a dot, and the other floors drawn faintly as layers.',
+  nidoplan: 'Nido without walls: just the rooms as tiles, the furniture as outlines, and every entity a coloured dot.',
 };
 /** The plan style this device uses. Photo render is experimental, so without that mode it falls back to Realistic. */
 const planStyle = () => (device.style === 'photo' && !device.experimental ? 'realistic' : device.style);
@@ -1608,7 +1677,7 @@ function lookSettings() {
     h('div', { class: 'msep' }),
     h('h3', { class: 'pad' }, 'Buttons / interface'),
     h('p', { class: 'hint' }, 'Everything around the plan: panels, buttons, menus and Widgets dashboards. A theme sets their colours, corners and lettering.'),
-    themeSettings({ changed: () => { useTheme(true); if (level() && !editor.active && view.styleId !== planStyle()) { view.setStyle(planStyle()); afterStyle?.(); buildLabels(); syncFromStates(); } if (openSheet === 'settings') renderSheet(); }, saveText }),
+    themeSettings({ changed: () => { useTheme(true); renderNav(); renderLayers(); view.washColor = dotColour('light'); paintDots(); view._assignLights?.(); view.requestRender(); if (level() && !editor.active && view.styleId !== planStyle()) { view.setStyle(planStyle()); afterStyle?.(); buildLabels(); syncFromStates(); } if (openSheet === 'settings') renderSheet(); }, saveText }),
     device.theme === 'frost' || device.theme === 'jack' ? frostSettings() : null,
     h('div', { class: 'menu-row' }, icon('sun'), h('span', { class: 'grow' }, 'Day / night'),
       seg([['auto', 'Auto'], ['day', 'Day'], ['night', 'Night']], device.dayNight, (v) => { device.dayNight = v; saveDevice(); applyDayNight(); renderSheet(); })),
@@ -2254,6 +2323,8 @@ new ResizeObserver(layoutStage).observe(stage.parentElement);
 /** Called after the plan's style is set: keeps the page background, backdrop and camera lock right. */
 function afterStyle() {
   renderLayers();
+  view.washColor = dotColour('light');
+  buildDots();
   root.dataset.style = view.styleId;
   if (view.styleId === 'photo' && view.isolated) view.isolate(null);
   if (view.styleId === 'photo' && level()) return applyPhoto();
