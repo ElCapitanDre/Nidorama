@@ -1012,15 +1012,17 @@ export class Editor {
         h('button', { class: 'wide', onclick: () => this.makeModel(blankDraft()) }, icon('plus'), 'New model'),
         h('button', { class: 'wide', onclick: () => this.pickStart() }, icon('copy'), 'Start from a piece')) : null,
       this.cat === MY_CAT && !this.myItems().length ? h('p', { class: 'hint' }, 'Nothing here yet. Make a model from boxes and cylinders, start from a built-in piece, or choose "Save as my model" on something already placed. Your models are kept in this home, on every device it is shared with.') : null,
-      h('div', { class: 'catalog' }, this.itemsIn(this.cat).map((i) => this.catItem(i, this.placing?.id === i.id, () => { this.placing = i; this.renderPanel(); }, 'Place it'))));
+      h('div', { class: 'catalog' }, this.itemsIn(this.cat).map((i) => this.catItem(i, this.placing?.id === i.id, () => { this.placing = i; this.renderPanel(); }, 'Place it',
+        i.cat === MY_CAT ? h('button', { class: 'round small cat-edit', 'aria-label': `Change ${i.name} in the model maker`, title: 'Change this model', onclick: () => this.editModel(i) }, icon('edit')) : null))));
   }
   /** One catalogue item: its picture (tap it to see it bigger) and its name (tap to choose it). */
-  catItem(i, on, pick, action) {
+  catItem(i, on, pick, action, extra = null) {
     const pic = thumb(i);
     return h('div', { class: 'cat-item' + (on ? ' on' : '') },
       h('button', { class: 'thumb', 'aria-label': `See the ${i.name.toLowerCase()} bigger`, title: 'See it bigger', onclick: () => this.showItem(i, pick, action) },
         pic ? h('img', { src: pic, alt: '', width: 56, height: 56 }) : h('span', { class: 'swatch', style: `background:${i.parts.at(-1)[6]}` })),
-      h('button', { class: 'cat-pick', onclick: pick }, h('span', { class: 'grow' }, i.name, h('span', { class: 'sub' }, `${len(i.size[0])} × ${len(i.size[1])}${i.light ? ' · light' : ''}`))));
+      h('button', { class: 'cat-pick', onclick: pick }, h('span', { class: 'grow' }, i.name, h('span', { class: 'sub' }, `${len(i.size[0])} × ${len(i.size[1])}${i.light ? ' · light' : ''}`))),
+      extra);
   }
   showItem(i, pick, action) {
     const pic = thumb(i, 300);
