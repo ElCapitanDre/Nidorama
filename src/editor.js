@@ -13,7 +13,7 @@ import { CATALOG, CATEGORIES, FLOOR_MATERIALS, makeObject, uid } from './catalog
 import { snap, round, dist, distToSeg, pointInPoly, pointInObject, objectCorners, centreOf, rotateAbout, polyBounds, wallLength, wallAt, wallDir, wallPoints, wallNearest, bearing } from './geom.js';
 import { thumb } from './thumbs.js';
 import { FINISHES, SWATCHES, finishName, finishColor } from './finishes.js';
-import { MY_CAT, cleanCatalog, itemFromObject, copiesOf, toDraft, blankDraft } from './mymodels.js';
+import { MY_CAT, cleanCatalog, itemFromObject, copiesOf, toDraft, blankDraft, mirroredOptions } from './mymodels.js';
 import { openModelMaker } from './modelmaker.js';
 import { haDashboards, frameGuide, insideHA } from './webpanel.js';
 import { dotColour, dotKindOf } from './themes.js';
@@ -72,7 +72,7 @@ export function rotateObject(L, o, deg) {
 /** Flip an object left ↔ right (a chaise moves to the other end of its sofa). */
 export function mirrorObject(L, o) {
   const c = centreOf(o);
-  for (const p of o.parts) { const a = p.min[0], b = p.max[0]; p.min[0] = round(2 * c[0] - b); p.max[0] = round(2 * c[0] - a); }
+  for (const p of o.parts) { const a = p.min[0], b = p.max[0]; p.min[0] = round(2 * c[0] - b); p.max[0] = round(2 * c[0] - a); Object.assign(p, mirroredOptions(p)); }
   for (const l of L.lights) {
     if (l.fixture !== o.id || !l.position) continue;
     const q = rotateAbout(l.position, c, -(o.rotation || 0)), m = rotateAbout([2 * c[0] - q[0], q[1]], c, o.rotation || 0);

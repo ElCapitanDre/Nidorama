@@ -1,13 +1,14 @@
 // "My models": furniture the user makes, kept in the home file (`home.catalog`) in the same form as the
 // built-in CATALOG, so placing, resizing, recolouring, rotating, lights and renders work on them unchanged.
 // Phase 1 of the model maker: save a placed piece as a model, place it again, update every placed copy.
-import { uid } from './catalog.js';
+import { uid, PART_OPTIONS } from './catalog.js';
 import { round } from './geom.js';
 
 export const MY_CAT = 'My models';
 const MAX_ITEMS = 200, MAX_PARTS = 200;
 const HEX = /^#[0-9a-f]{6}$/i;
-const SHAPES = ['cylinder'];
+export const SHAPES = ['cylinder', 'sphere', 'dome', 'cone', 'wedge'];
+const SLOPES = ['front', 'back', 'left', 'right'];
 const num = (v, lo, hi, fallback = null) => (v === '' || v == null || !Number.isFinite(+v) ? fallback : Math.min(hi, Math.max(lo, +v)));
 const frac = (v) => Math.round(v * 1e4) / 1e4; // fractions need more places than metres
 
@@ -19,8 +20,15 @@ function cleanPart(p) {
   const color = HEX.test(p[6]) ? p[6].toLowerCase() : '#cfc8bd';
   const o = p[7] && typeof p[7] === 'object' ? p[7] : {}, opts = {};
   if (SHAPES.includes(o.shape)) opts.shape = o.shape;
-  const radius = num(o.radius, 0, 1); if (radius) opts.radius = radius;
+  const radius = num(o.radius, 0, 1); if (radius) opts.radius = radius; // only boxes use it; kept on others as given
   const opacity = num(o.opacity, 0, 1); if (opacity != null) opts.opacity = opacity;
+  if (['cylinder', 'cone'].includes(opts.shape) && ['x', 'y'].includes(o.axis)) opts.axis = o.axis;
+  if (opts.shape === 'cone') {
+    const top = num(o.top, 0, 1), bottom = num(o.bottom, 0, 1);
+    if (top != null && top !== 0) opts.top = frac(top);
+    if (bottom != null && bottom !== 1) opts.bottom = frac(bottom);
+  }
+  if (opts.shape === 'wedge' && SLOPES.includes(o.slope) && o.slope !== 'front') opts.slope = o.slope;
   return Object.keys(opts).length ? [...c.map(frac), color, opts] : [...c.map(frac), color];
 }
 
@@ -55,13 +63,20 @@ export function itemFromObject(o, name, light = null, id = uid('my'), rev = 1) {
   const [x0, y0, z0] = o.bounds.min, [x1, y1, z1] = o.bounds.max;
   const w = x1 - x0 || 1, d = y1 - y0 || 1, h = z1 - z0 || 1;
   const parts = o.parts.map((p) => {
-    const opts = {};
-    if (p.shape) opts.shape = p.shape;
-    if (p.radius) opts.radius = p.radius;
-    if (p.opacity != null) opts.opacity = p.opacity;
+    const opts = optionsOf(p);
     return [(p.min[0] - x0) / w, (p.min[1] - y0) / d, (p.min[2] - z0) / h, (p.max[0] - x0) / w, (p.max[1] - y0) / d, (p.max[2] - z0) / h, p.color, opts];
   });
   return cleanItem({ id, name, size: [w, d, h], z: z0, light: light?.position ? { z: light.position[2] - z0 } : undefined, parts, rev });
+}
+
+/** A part's shape options (everything but its box and colour). */
+export const optionsOf = (p) => Object.fromEntries(PART_OPTIONS.filter((k) => p[k] != null).map((k) => [k, p[k]]));
+/** Part options flipped left ↔ right: a wedge sloping to the left now slopes to the right, a cone lying across points the other way. */
+export function mirroredOptions(p) {
+  const o = {};
+  if (p.slope === 'left' || p.slope === 'right') o.slope = p.slope === 'left' ? 'right' : 'left';
+  if (p.shape === 'cone' && p.axis === 'x') { o.top = p.bottom ?? 1; o.bottom = p.top ?? 0; }
+  return o;
 }
 
 /** Every placed copy of a model, on every level of the home: [{ L, o }]. */
@@ -83,8 +98,7 @@ const box = (parts) => [0, 1, 2].map((k) => [Math.min(...parts.map((p) => p.min[
 export function toDraft(item) {
   const [w, d, h] = item.size;
   const parts = item.parts.map(([a, b, c, e, f, g, color, opts = {}]) => ({
-    min: [m3(a * w), m3(b * d), m3(c * h)], max: [m3(e * w), m3(f * d), m3(g * h)], color: String(color).toLowerCase(),
-    ...(opts.shape ? { shape: opts.shape } : {}), ...(opts.radius ? { radius: opts.radius } : {}), ...(opts.opacity != null ? { opacity: opts.opacity } : {}),
+    min: [m3(a * w), m3(b * d), m3(c * h)], max: [m3(e * w), m3(f * d), m3(g * h)], color: String(color).toLowerCase(), ...optionsOf(opts),
   }));
   return { name: item.name, z: item.z || 0, light: item.light ? { z: item.light.z * h } : null, parts };
 }
@@ -102,7 +116,7 @@ export function fromDraft(dr, id = uid('my'), rev = 1) {
   const raw = {
     id, rev, name: dr.name, size, z: (dr.z || 0) + b[2][0], light: dr.light ? { z: dr.light.z - b[2][0] } : undefined,
     parts: parts.map((p) => [...[0, 1, 2].map((k) => (p.min[k] - b[k][0]) / size[k]), ...[0, 1, 2].map((k) => (p.max[k] - b[k][0]) / size[k]), p.color,
-      { shape: p.shape, radius: p.radius, opacity: p.opacity }]),
+      optionsOf(p)]),
   };
   return cleanItem(raw);
 }
@@ -118,6 +132,7 @@ export function duplicatePart(dr, i, dx = 0.05) {
 export function mirrorPart(dr, i) {
   const [[x0, x1]] = box(dr.parts), p = structuredClone(dr.parts[i]), a = p.min[0], e = p.max[0];
   p.min[0] = m3(x0 + x1 - e); p.max[0] = m3(x0 + x1 - a);
+  Object.assign(p, mirroredOptions(p));
   dr.parts.push(p);
   return dr.parts.length - 1;
 }
@@ -127,7 +142,7 @@ export function legsUnder(dr, i, t = 0.05) {
   if (top < 0.02) return 0;
   const tx = Math.min(t, (p.max[0] - p.min[0]) / 3), ty = Math.min(t, (p.max[1] - p.min[1]) / 3);
   for (const [x, y] of [[p.min[0], p.min[1]], [p.max[0] - tx, p.min[1]], [p.min[0], p.max[1] - ty], [p.max[0] - tx, p.max[1] - ty]]) {
-    dr.parts.push({ min: [m3(x), m3(y), 0], max: [m3(x + tx), m3(y + ty), m3(top)], color: p.color, ...(p.shape ? { shape: p.shape } : {}) });
+    dr.parts.push({ min: [m3(x), m3(y), 0], max: [m3(x + tx), m3(y + ty), m3(top)], color: p.color, ...(p.shape === 'cylinder' && !p.axis ? { shape: 'cylinder' } : {}) });
   }
   return 4;
 }

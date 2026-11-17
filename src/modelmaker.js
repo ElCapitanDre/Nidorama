@@ -1,16 +1,21 @@
-// The model maker (phases 2 and 3 of My models): make or change a model of your own from boxes and cylinders,
+// The model maker (phases 2 to 4 of My models): make or change a model of your own from boxes, cylinders,
+// spheres, domes, cones and wedges (see shapes.js),
 // with a 3D view to turn around, tap parts in, and drag them: the chosen part's body moves it across, its
 // arrows move it along one direction each (across, front to back, up), and the dots on its faces resize it. Dragged faces snap to other parts and to the floor. Works on a draft in metres (see mymodels.js); saving
 // hands back a checked model item. One graphics context, drawn only when something changes (wall tablets).
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { partGeometry } from './shapes.js';
 import { h, nodes, icon, seg, numField, textField } from './ui.js';
 import { MAX_DRAFT_PARTS, draftSize, fromDraft, duplicatePart, mirrorPart, legsUnder, scaleDraft, movePartAxis, resizePartFace } from './mymodels.js';
 
-const SHAPES = [['box', 'Box'], ['round', 'Rounded'], ['cylinder', 'Cylinder']];
-const shapeOf = (p) => (p.shape === 'cylinder' ? 'cylinder' : p.radius ? 'round' : 'box');
-const shapeName = { box: 'Box', round: 'Rounded box', cylinder: 'Cylinder' };
+const SHAPES = [['box', 'Box'], ['round', 'Rounded'], ['cylinder', 'Cylinder'], ['sphere', 'Sphere'], ['dome', 'Dome'], ['cone', 'Cone'], ['wedge', 'Wedge']];
+const shapeOf = (p) => p.shape || (p.radius ? 'round' : 'box');
+const shapeName = { box: 'Box', round: 'Rounded box', cylinder: 'Cylinder', sphere: 'Sphere', dome: 'Dome', cone: 'Cone', wedge: 'Wedge' };
+const LIES = [['', 'Upright'], ['x', 'Left to right'], ['y', 'Front to back']];
+const SLOPES = [['front', 'Front'], ['back', 'Back'], ['left', 'Left'], ['right', 'Right']];
+/** A cone's two ends, named for the way it lies. */
+const coneEnds = (axis) => (axis === 'x' ? ['Right end', 'Left end'] : axis === 'y' ? ['Front end', 'Back end'] : ['Top', 'Bottom']);
 const toCm = (v) => Math.round(v * 1000) / 10;
 const toM = (v) => Math.round(v * 10) / 1000;
 
@@ -72,11 +77,16 @@ export function openModelMaker({ draft, id, rev = 1, title = 'Model maker', onSa
     const len = (k, label) => numField(label, toCm(p.max[k] - p.min[k]), (v) => set(() => { p.max[k] = toM(toCm(p.min[k]) + Math.max(0.5, snapTo(v))); }), { step, min: 0.5, max: 5000, unit: 'cm' });
     const shape = shapeOf(p);
     return [
-      h('div', { class: 'row' }, h('div', { class: 'row-label' }, 'Shape'), seg(SHAPES, shape, (v) => set(() => {
-        delete p.shape; delete p.radius;
-        if (v === 'cylinder') p.shape = 'cylinder';
+      h('div', { class: 'stack mm-shape' }, h('div', { class: 'row-label' }, 'Shape'), h('div', { class: 'seg wrap' }, SHAPES.map(([v, label]) => h('button', { class: v === shape ? 'on' : '', onclick: () => set(() => {
+        for (const k of ['shape', 'radius', 'axis', 'top', 'bottom', 'slope']) delete p[k];
         if (v === 'round') p.radius = toM(Math.max(1, Math.min(5, toCm(Math.min(...[0, 1, 2].map((k) => p.max[k] - p.min[k]))) / 4)));
-      }))),
+        else if (v !== 'box') p.shape = v;
+      }) }, label)))),
+      shape === 'cylinder' || shape === 'cone' ? h('div', { class: 'row' }, h('div', { class: 'row-label' }, 'Lies'), seg(LIES, p.axis || '', (v) => set(() => { if (v) p.axis = v; else delete p.axis; }))) : null,
+      shape === 'cone' ? h('div', { class: 'fields' },
+        numField(`${coneEnds(p.axis)[0]} width`, Math.round((p.top ?? 0) * 100), (v) => set(() => { if (v > 0) p.top = v / 100; else delete p.top; }), { step: 5, min: 0, max: 100, unit: '%' }),
+        numField(`${coneEnds(p.axis)[1]} width`, Math.round((p.bottom ?? 1) * 100), (v) => set(() => { if (v < 100) p.bottom = v / 100; else delete p.bottom; }), { step: 5, min: 0, max: 100, unit: '%' })) : null,
+      shape === 'wedge' ? h('div', { class: 'row' }, h('div', { class: 'row-label' }, 'Slopes down to the'), seg(SLOPES, p.slope || 'front', (v) => set(() => { if (v === 'front') delete p.slope; else p.slope = v; }))) : null,
       h('div', { class: 'fields' }, pos(0, 'From the left'), pos(1, 'From the back'), pos(2, 'Off the floor'), len(0, 'Width'), len(1, 'Depth'), len(2, 'Height')),
       h('div', { class: 'fields' },
         shape === 'round' ? numField('Rounding', toCm(p.radius), (v) => set(() => { p.radius = toM(Math.max(0.1, v)); }), { step: 0.5, min: 0.1, max: 100, unit: 'cm' }) : null,
@@ -111,10 +121,9 @@ export function openModelMaker({ draft, id, rev = 1, title = 'Model maker', onSa
       h('h3', {}, `Parts (${dr.parts.length}${full ? ', the most a model can have' : ''})`),
       h('div', { class: 'mm-parts' }, dr.parts.map((q, i) => h('button', { class: 'chip small' + (i === sel ? ' on' : ''), onclick: () => { sel = i; redraw(); } },
         h('span', { class: 'mm-swatch', style: `background:${q.color}` }), `${i + 1} · ${shapeName[shapeOf(q)]}`))),
-      h('div', { class: 'btns' },
-        h('button', { class: 'wide', onclick: () => add(null), disabled: full }, icon('plus'), 'Box'),
-        h('button', { class: 'wide', onclick: () => add('cylinder'), disabled: full }, icon('plus'), 'Cylinder')),
-      p ? [h('h3', {}, `Part ${sel + 1}`), ...partFields(p)] : h('p', { class: 'hint' }, 'Add a box or a cylinder to start.'),
+      h('div', { class: 'btns mm-add' }, [[null, 'Box'], ['cylinder', 'Cylinder'], ['sphere', 'Sphere'], ['cone', 'Cone'], ['wedge', 'Wedge']].map(([shape, label]) =>
+        h('button', { class: 'chip small', onclick: () => add(shape), disabled: full }, icon('plus'), label))),
+      p ? [h('h3', {}, `Part ${sel + 1}`), ...partFields(p)] : h('p', { class: 'hint' }, 'Add a shape to start.'),
       h('div', { class: 'btns mm-foot' },
         h('button', { class: 'wide ghost', onclick: () => leave() }, 'Cancel'),
         h('button', { class: 'wide primary', onclick: save }, icon('check'), 'Save model'))));
@@ -198,10 +207,7 @@ function preview(host, hooks) {
     dr.parts.forEach((p, i) => {
       const w = p.max[0] - p.min[0], d = p.max[1] - p.min[1], hh = p.max[2] - p.min[2];
       if (w <= 0 || d <= 0 || hh <= 0) return;
-      let geo;
-      if (p.shape === 'cylinder') { geo = new THREE.CylinderGeometry(0.5, 0.5, 1, 32); geo.scale(w, hh, d); }
-      else if (p.radius) geo = new RoundedBoxGeometry(w, hh, d, 3, Math.min(p.radius, w / 2, d / 2, hh / 2) * 0.999);
-      else geo = new THREE.BoxGeometry(w, hh, d);
+      const geo = partGeometry(p, w, hh, d);
       const mat = new THREE.MeshStandardMaterial({ color: p.color, roughness: 0.8, transparent: p.opacity != null, opacity: p.opacity ?? 1,
         emissive: i === sel ? '#ff9a3c' : '#000000', emissiveIntensity: i === sel ? 0.12 : 0 });
       const m = new THREE.Mesh(geo, mat);
