@@ -1,6 +1,6 @@
 // The model maker (phases 2 and 3 of My models): make or change a model of your own from boxes and cylinders,
 // with a 3D view to turn around, tap parts in, and drag them: the chosen part's body moves it across, its
-// arrow lifts it, and the dots on its faces resize it. Dragged faces snap to other parts and to the floor. Works on a draft in metres (see mymodels.js); saving
+// arrows move it along one direction each (across, front to back, up), and the dots on its faces resize it. Dragged faces snap to other parts and to the floor. Works on a draft in metres (see mymodels.js); saving
 // hands back a checked model item. One graphics context, drawn only when something changes (wall tablets).
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -35,7 +35,7 @@ export function openModelMaker({ draft, id, rev = 1, title = 'Model maker', onSa
   const back = (from, to) => { if (!from.length) return; to.push(JSON.stringify({ dr, sel })); ({ dr, sel } = JSON.parse(from.pop())); dirty = true; redraw(); };
 
   const side = h('div', { class: 'mm-side' });
-  const viewHost = h('div', { class: 'mm-view', 'aria-label': '3D view of the model: drag empty space to turn it, tap a part to choose it, drag the chosen part, its arrow or its dots to move and resize it' });
+  const viewHost = h('div', { class: 'mm-view', 'aria-label': '3D view of the model: drag empty space to turn it, tap a part to choose it, drag the chosen part or its arrows to move it, its dots to resize it' });
   // A drag changes the part live; it becomes one undo step when the finger lifts.
   let dragFrom = null;
   const view = preview(viewHost, {
@@ -178,14 +178,16 @@ function preview(host, hooks) {
   /** A handle: what is seen, with a bigger invisible ball around it that is easy to hit with a finger. */
   function handle(kind, pos, extra) {
     const g = new THREE.Group();
-    const look = kind === 'lift' ? new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.3, 20), handleMat('#e07b16')) : new THREE.Mesh(new THREE.SphereGeometry(0.5, 16, 12), handleMat('#ffffff'));
-    if (kind !== 'lift') { const ring = new THREE.Mesh(new THREE.SphereGeometry(0.62, 16, 12), handleMat('#e07b16')); ring.renderOrder = 3; g.add(ring); }
+    const look = kind === 'arrow' ? new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.3, 20), handleMat('#e07b16')) : new THREE.Mesh(new THREE.SphereGeometry(0.5, 16, 12), handleMat('#ffffff'));
+    if (kind === 'arrow' && extra.axis === 0) look.rotation.z = -Math.PI / 2; // cones point up: turn them to point right, or to the front
+    if (kind === 'arrow' && extra.axis === 1) look.rotation.x = Math.PI / 2;
+    if (kind !== 'arrow') { const ring = new THREE.Mesh(new THREE.SphereGeometry(0.62, 16, 12), handleMat('#e07b16')); ring.renderOrder = 3; g.add(ring); }
     look.renderOrder = 4;
     const hit = new THREE.Mesh(new THREE.SphereGeometry(1.6, 8, 6), pickMat());
     hit.userData = { handle: kind, ...extra };
     g.add(look, hit);
     g.position.copy(pos);
-    if (extra?.axis != null) g.userData.normal = AXES[extra.axis].clone().multiplyScalar(extra.side === 'max' ? 1 : -1);
+    if (kind === 'face') g.userData.normal = AXES[extra.axis].clone().multiplyScalar(extra.side === 'max' ? 1 : -1);
     handles.add(g);
     return hit;
   }
@@ -213,7 +215,8 @@ function preview(host, hooks) {
         m.add(edges);
       }
     });
-    // The chosen part's handles: a dot on each face (resize along that axis), an arrow above it (lift).
+    // The chosen part's handles: a dot on each face (resize along that axis), and an arrow beyond its right face,
+    // its front face and its top (move along that axis).
     hits = [];
     const p = dr.parts[sel];
     if (p) {
@@ -222,8 +225,10 @@ function preview(host, hooks) {
         const at = [...c]; at[k] = p[side][k];
         hits.push(handle('face', toView(...at), { axis: k, side }));
       }
-      const top = Math.max(p.max[2] + 0.12, p.max[2] + (p.max[2] - p.min[2]) * 0.25);
-      hits.push(handle('lift', toView(c[0], c[1], top), {}));
+      for (const k of [0, 1, 2]) {
+        const at = [...c]; at[k] = p.max[k] + Math.max(0.12, (p.max[k] - p.min[k]) * 0.25);
+        hits.push(handle('arrow', toView(...at), { axis: k }));
+      }
     }
     if (!noFit && (refit || !fitted)) { fitted = true; fit(dr); } else draw();
   }
@@ -252,9 +257,9 @@ function preview(host, hooks) {
     canvas.setPointerCapture(e.pointerId);
     const p = last.dr.parts[last.sel];
     if (h0?.handle === 'face') drag = { kind: 'face', axis: h0.axis, side: h0.side, origin: toView(...[0, 1, 2].map((k) => (k === h0.axis ? 0 : (p.min[k] + p.max[k]) / 2))), start: p[h0.side][h0.axis] };
-    else if (h0?.handle === 'lift') drag = { kind: 'lift', origin: toView((p.min[0] + p.max[0]) / 2, (p.min[1] + p.max[1]) / 2, 0), start: p.min[2] };
+    else if (h0?.handle === 'arrow') drag = { kind: 'arrow', axis: h0.axis, origin: toView(...[0, 1, 2].map((k) => (k === h0.axis ? 0 : (p.min[k] + p.max[k]) / 2))), start: p.min[h0.axis] };
     else { const y = body.point.y; const at = r.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -y), new THREE.Vector3()); drag = at && { kind: 'move', y, at, start: [p.min[0], p.min[1]] }; }
-    if (drag) { drag.grab = drag.kind === 'move' ? null : alongAxis(r, drag.origin, AXES[drag.kind === 'lift' ? 2 : drag.axis]); drag.started = false; }
+    if (drag) { drag.grab = drag.kind === 'move' ? null : alongAxis(r, drag.origin, AXES[drag.axis]); drag.started = false; }
   }, { capture: true });
   canvas.addEventListener('pointermove', (e) => {
     if (!drag || !down) return;
@@ -275,14 +280,14 @@ function preview(host, hooks) {
         }
         say(bits.join(' · '));
       } else {
-        const t = alongAxis(r, drag.origin, AXES[drag.kind === 'lift' ? 2 : drag.axis]);
+        const t = alongAxis(r, drag.origin, AXES[drag.axis]);
         if (t == null || drag.grab == null) return;
-        if (drag.kind === 'lift') {
-          const len = p.max[2] - p.min[2], tmp = { ...dr, parts: dr.parts.map((q, i) => (i === sel ? { ...q, min: [...q.min], max: [...q.max] } : q)) };
-          tmp.parts[sel].min[2] = drag.start; tmp.parts[sel].max[2] = drag.start + len;
-          const m = movePartAxis(tmp, sel, 2, t - drag.grab, tol, step);
-          p.min[2] = m.min; p.max[2] = m.max;
-          say(`off the floor ${cm(m.min)}${m.snapped ? ' ⟷' : ''}`);
+        if (drag.kind === 'arrow') {
+          const k = drag.axis, len = p.max[k] - p.min[k], tmp = { ...dr, parts: dr.parts.map((q, i) => (i === sel ? { ...q, min: [...q.min], max: [...q.max] } : q)) };
+          tmp.parts[sel].min[k] = drag.start; tmp.parts[sel].max[k] = drag.start + len;
+          const m = movePartAxis(tmp, sel, k, t - drag.grab, tol, step);
+          p.min[k] = m.min; p.max[k] = m.max;
+          say(`${['from the left', 'from the back', 'off the floor'][k]} ${cm(m.min)}${m.snapped ? ' ⟷' : ''}`);
         } else {
           const k = drag.axis, m = resizePartFace(dr, sel, k, drag.side, drag.start + (t - drag.grab), tol, step);
           p.min[k] = m.min; p.max[k] = m.max;
