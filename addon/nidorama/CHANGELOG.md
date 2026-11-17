@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.24.0
+- Nido: a new theme and plan style, with your floors shown as layers
+- Smooth moves between the whole site and its levels
+- Paint, brick, sandstone, weatherboards and more on each side of a wall
+- Paintable door and window trims
+- Music Assistant one tap away in More
+- Buttons can open Home Assistant, Music Assistant or Homey
+- What's new is listed when an update is offered
+
 ## 0.23.1
 - Units sit at the top of Settings: Metric or Imperial.
 - Settings → Updates and backup starts with Check for updates automatically, On or Off.

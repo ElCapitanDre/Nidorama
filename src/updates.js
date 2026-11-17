@@ -53,7 +53,22 @@ export async function findUpdate(currentVersion, token = '', channel = 'stable')
   const mine = buildOf(currentVersion);
   if (!mine || !__REPO__) return null;
   const ok = ACCEPTS[channel] || ACCEPTS.stable;
-  return (await listBuilds(token)).find((b) => ok.includes(b.channel) && b.build > mine) || null;
+  const newer = (await listBuilds(token)).filter((b) => ok.includes(b.channel) && b.build > mine);
+  if (!newer.length) return null;
+  // What the update brings (#130): the notes of every newer build, newest first, without repeats.
+  const seen = new Set(), add = [], fix = [];
+  for (const b of newer) for (const n of notesOf(b.body)) if (!seen.has(n.text)) { seen.add(n.text); (n.fix ? fix : add).push(n.text); }
+  return { ...newer[0], notes: { add, fix } };
+}
+/** A release's short notes (#130): the lines between <!-- nidorama:notes --> and <!-- /nidorama:notes -->.
+ *  A line starting "Fixed" or "Fix" is a fix; the rest are new or improved. */
+export function notesOf(body = '') {
+  const m = /<!-- nidorama:notes -->([\s\S]*?)<!-- \/nidorama:notes -->/.exec(body);
+  if (!m) return [];
+  return m[1].split('\n').map((l) => l.replace(/^\s*[-*]\s*/, '').trim()).filter(Boolean).map((t) => {
+    const fix = /^fix(ed)?\b[:\s]*/i.test(t);
+    return { fix, text: fix ? t.replace(/^fix(ed)?\b[:\s]*/i, '').replace(/^./, (c) => c.toUpperCase()) : t };
+  });
 }
 /** The newest build a channel offers, whatever is installed (used to go back to an earlier stage). */
 export async function latestIn(channel, token = '') {

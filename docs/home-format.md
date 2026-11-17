@@ -104,3 +104,6 @@ Materials so far: `timber-dark`, `marble-tile`, `mosaic-tile`, `decking`, `stair
   sketch guide has them: `_guide` at the top, `_walls`, `_openings`, `_rooms`, `_objects`, … on a level).
   Comments and trailing commas are accepted. Furniture may be short: `{ id, kind, at: [x, y], rotation, name,
   entity }`; the shape (and a lamp's light) is made from the catalogue.
+- v0.24: `walls[].sides: { r: { finish, color }, l: { finish, color } }` (the faces to the right and left of `a` → `b`;
+  finish paint | render | brick | sandstone | weatherboard | timber | stone | tiles); `openings[].trim` (a door's
+  frame colour; a window's frame stays `color`); `buttons[].app: 'ha' | 'ma' | 'homey'` (the button opens that app).

@@ -12,6 +12,7 @@ import { controlRow, editControl, newControl } from './controls.js';
 import { CATALOG, CATEGORIES, FLOOR_MATERIALS, makeObject, uid } from './catalog.js';
 import { snap, round, dist, distToSeg, pointInPoly, pointInObject, objectCorners, centreOf, rotateAbout, polyBounds, wallLength, wallAt, wallDir, wallPoints, wallNearest, bearing } from './geom.js';
 import { thumb } from './thumbs.js';
+import { FINISHES, SWATCHES, finishName, finishColor } from './finishes.js';
 import { haDashboards, frameGuide, insideHA } from './webpanel.js';
 import { boundsOf, ROOF_TYPES, ROOF_MATERIALS, MAX_FLOOR, floorName, planLevels, placeOf, floorOf, floorsOf, piecesOf, pieceCorners, newPiece, outlineBox, outsideCorners, toSite, fromSite, across, floorBelow } from './site.js';
 
@@ -1095,6 +1096,64 @@ export class Editor {
         h('button', { class: 'wide danger', onclick: () => this.deleteSelection() }, icon('trash'), 'Delete')));
   }
 
+  /** Which face of a wall is which (#129): for an outside wall, the face away from the middle of the home is
+   *  Outside; for an inside wall, each face is named after the room it looks into. Faces: r (right of a→b), l. */
+  wallFaces(w) {
+    const L = this.level, mid = wallAt(w, wallLength(w) / 2), d = wallDir(w, wallLength(w) / 2), right = [-d[1], d[0]];
+    const probe = (k) => [mid[0] + right[0] * k * (w.thickness / 2 + 0.25), mid[1] + right[1] * k * (w.thickness / 2 + 0.25)];
+    const roomAt = (p) => L.rooms.find((r) => !r.outdoor && pointInPoly(p, r.polygon))?.name;
+    if (w.exterior) {
+      const ext = L.walls.filter((q) => q.exterior).flatMap((q) => [q.a, q.b]), c = ext.length ? [ext.reduce((a, q) => a + q[0], 0) / ext.length, ext.reduce((a, q) => a + q[1], 0) / ext.length] : mid;
+      const rightOut = (mid[0] - c[0]) * right[0] + (mid[1] - c[1]) * right[1] > 0;
+      return rightOut ? [['r', 'Outside'], ['l', 'Inside']] : [['l', 'Outside'], ['r', 'Inside']];
+    }
+    return [['r', roomAt(probe(1)) ? `Facing ${roomAt(probe(1))}` : 'One side'], ['l', roomAt(probe(-1)) ? `Facing ${roomAt(probe(-1))}` : 'Other side']];
+  }
+  /** Finishes of the two faces of a wall, each with "apply to" (#129). */
+  finishPanel(w) {
+    const faces = this.wallFaces(w), sides = w.sides || {};
+    const setFace = (k, v) => this.change((lv) => { const x = lv.walls.find((q) => q.id === w.id); x.sides = { ...(x.sides || {}), [k]: { ...(x.sides?.[k] || {}), ...v } }; });
+    const applyTo = (k, label, scope) => {
+      const val = structuredClone(sides[k] || { finish: 'paint' });
+      this.change((lv) => {
+        for (const x of lv.walls) {
+          if (scope === 'outside' && !x.exterior) continue;
+          if (scope === 'room') {
+            const near = this.facesOf(lv, x).filter(([, name]) => name === label);
+            for (const [kk] of near) x.sides = { ...(x.sides || {}), [kk]: structuredClone(val) };
+            continue;
+          }
+          const f = this.facesOf(lv, x).find(([, name]) => name === 'Outside');
+          if (f) x.sides = { ...(x.sides || {}), [f[0]]: structuredClone(val) };
+        }
+      });
+      toast(scope === 'outside' ? 'Every outside wall now has this finish outside.' : `Every wall of ${label.replace('Facing ', '')} now has this finish.`);
+    };
+    return h('details', { class: 'finishes', open: !!w.sides },
+      h('summary', {}, 'Finishes', h('span', { class: 'sub' }, faces.map(([k]) => finishName(sides[k]?.finish)).join(' · '))),
+      faces.map(([k, label]) => {
+        const sd = sides[k] || {}, f = sd.finish || 'paint', def = FINISHES.find((x) => x[0] === f);
+        return h('div', { class: 'stack face' },
+          h('div', { class: 'sub' }, label),
+          h('label', { class: 'field wide-field' }, h('span', {}, 'Finish'),
+            h('select', { onchange: (e) => setFace(k, { finish: e.target.value, color: SWATCHES[e.target.value]?.[0] }) }, FINISHES.map(([id, name]) => h('option', { value: id, selected: id === f }, name)))),
+          def?.[3] !== false || SWATCHES[f]?.length > 1 ? h('div', { class: 'swatches' },
+            (SWATCHES[f] || []).map((c) => h('button', { class: 'swatch-btn' + (c === finishColor(sd) ? ' on' : ''), style: `background:${c}`, 'aria-label': `Colour ${c}`, onclick: () => setFace(k, { finish: f, color: c }) })),
+            h('span', { class: 'colbtn' }, h('input', { type: 'color', value: finishColor(sd), 'aria-label': 'Any colour', onchange: (e) => setFace(k, { finish: f, color: e.target.value }) }))) : null,
+          h('div', { class: 'btns' },
+            label === 'Outside' ? h('button', { class: 'wide ghost', onclick: () => applyTo(k, label, 'outside') }, 'Use on every outside wall') : null,
+            label.startsWith('Facing ') || label === 'Inside' ? h('button', { class: 'wide ghost', onclick: () => applyTo(k, label === 'Inside' ? this.insideName(w, k) : label, 'room') }, label === 'Inside' ? 'Use on this room\'s walls' : `Use on every wall of ${label.replace('Facing ', '')}`) : null));
+      }));
+  }
+  /** Faces of any wall of a level, named as wallFaces names them (used to apply a finish to many walls). */
+  facesOf(lv, x) { const as = { level: lv }; return this.wallFaces.call(as, x).map(([k, name]) => [k, name === 'Inside' ? this.insideName.call(as, x, k) : name]); }
+  /** The room an outside wall's inside face looks into, as "Facing <room>". */
+  insideName(w, k) {
+    const L = this.level, mid = wallAt(w, wallLength(w) / 2), d = wallDir(w, wallLength(w) / 2), s = k === 'r' ? 1 : -1;
+    const p = [mid[0] - d[1] * s * (w.thickness / 2 + 0.25), mid[1] + d[0] * s * (w.thickness / 2 + 0.25)];
+    const r = L.rooms.find((q) => !q.outdoor && pointInPoly(p, q.polygon));
+    return r ? `Facing ${r.name}` : 'Inside';
+  }
   wallInspector(w) {
     const len = dist(w.a, w.b), run = wallLength(w);
     const edit = (fn) => this.change((lv) => fn(lv.walls.find((q) => q.id === w.id)));
@@ -1109,6 +1168,7 @@ export class Editor {
         numField('Height', w.height, (v) => edit((x) => (x.height = v)), { min: 0.1, max: 10 })),
       h('p', { class: 'hint' }, `Type a length or an angle (0° points up the plan, 90° to the right), or tap them on the wall. The far end moves, with any walls joined to it. Curve bows the wall: it is how far the middle sits from the straight line (0 = straight, minus = the other way); you can also drag the small middle handle.${w.bulge ? ` Along the curve it is ${fmt(run)}.` : ''}`),
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!w.exterior, onchange: (e) => edit((x) => (x.exterior = e.target.checked)) }), 'Outside wall'),
+      this.finishPanel(w),
       (w.openings || []).length ? h('h3', {}, 'Doors and windows in this wall') : null,
       (w.openings || []).map((o) => h('div', { class: 'row' },
         h('button', { class: 'row-label linkish', onclick: () => this.select({ type: 'opening', id: o.id, wall: w.id }) }, h('div', {}, openingName(o)), h('div', { class: 'sub' }, `${fmt(o.width)} wide, ${fmt(o.offset)} from the start`)),
@@ -1149,8 +1209,12 @@ export class Editor {
       o.type === 'door' && drawn ? h('div', { class: 'btns' },
         o.style !== 'double' ? h('button', { class: 'wide ghost', onclick: () => edit((x) => { if (x.hinge === 'end') delete x.hinge; else x.hinge = 'end'; }) }, icon('rotate'), o.style === 'sliding' ? 'Slide the other way' : 'Hinge on the other side') : null,
         h('button', { class: 'wide ghost', onclick: () => edit((x) => { if (x.swing === -1) delete x.swing; else x.swing = -1; }) }, icon('rotateL'), o.style === 'sliding' ? 'Other face of the wall' : 'Open the other way')) : null,
-      drawn && o.type !== 'opening' ? h('div', { class: 'row' }, h('div', { class: 'row-label' }, o.type === 'door' ? 'Door colour' : 'Frame colour'),
-        h('span', { class: 'colbtn' }, h('input', { type: 'color', value: o.color || '#f3f0ea', 'aria-label': 'Colour', onchange: (e) => edit((x) => (x.color = e.target.value)) }))) : null,
+      drawn && o.type !== 'opening' ? h('div', { class: 'row' }, h('div', { class: 'row-label' }, o.type === 'door' ? 'Door colour' : 'Frame and trim colour'),
+        h('span', { class: 'colbtn' }, h('input', { type: 'color', value: o.color || '#f3f0ea', 'aria-label': o.type === 'door' ? 'Door colour' : 'Frame and trim colour', onchange: (e) => edit((x) => (x.color = e.target.value)) }))) : null,
+      drawn && o.type === 'door' ? h('div', { class: 'row' }, h('div', { class: 'row-label' }, h('div', {}, 'Trim colour'), h('div', { class: 'sub' }, o.trim ? 'the frame around the doorway' : 'no frame drawn')),
+        o.trim ? h('button', { class: 'chip small', onclick: () => edit((x) => delete x.trim) }, 'None') : null,
+        h('span', { class: 'colbtn' }, h('input', { type: 'color', value: o.trim || '#f3f0ea', 'aria-label': 'Trim colour', onchange: (e) => edit((x) => (x.trim = e.target.value)) }))) : null,
+      drawn && o.type !== 'opening' ? h('button', { class: 'wide ghost', onclick: () => { const same = o.type === 'door' ? (q) => q.type === 'door' : (q) => q.type !== 'door' && q.type !== 'opening'; this.change((lv) => { for (const wl of lv.walls) for (const q of wl.openings || []) if (same(q)) { q.color = o.color; if (o.type === 'door') { if (o.trim) q.trim = o.trim; else delete q.trim; } } }); toast(o.type === 'door' ? 'Every door on this level now has these colours.' : 'Every window on this level now has this colour.'); } }, o.type === 'door' ? 'Use these colours on every door' : 'Use this colour on every window') : null,
       h('p', { class: 'hint' }, 'Drag it on the plan to slide it along its wall. Tap it again to select the wall it is in.'),
       h('div', { class: 'btns' },
         h('button', { class: 'wide', onclick: () => { const id = uid('o'); this.sel = { type: 'opening', id, wall: w.id }; edit((x, wl) => { const c = { ...structuredClone(x), id }; c.offset = x.offset + x.width + 0.1 + c.width <= len ? x.offset + x.width + 0.1 : Math.max(0, x.offset - x.width - 0.1); fit(c); wl.openings.push(c); }); } }, icon('copy'), 'Duplicate'),
@@ -1226,7 +1290,13 @@ export class Editor {
     return h('div', { class: 'stack' },
       h('h3', {}, 'Button'),
       textField('Name', b.name, (v) => v && edit((x) => (x.name = v))),
-      b.view ? h('p', { class: 'hint' }, { left: 'Turns the view 45° to the left.', right: 'Turns the view 45° to the right.', home: 'Goes to this floor plan\'s home view.', fit: 'Shows the whole plan.' }[b.view]) : entityField('Controls (tap toggles or runs, hold for details)', b.entity, (v) => v && edit((x) => (x.entity = v))),
+      b.view ? null : h('div', { class: 'row' }, h('div', { class: 'row-label' }, 'What it does'),
+        seg([[false, 'A device'], [true, 'Opens an app']], !!b.app, (v) => edit((x) => { if (v) { x.app = x.app || 'ha'; x.icon ||= x.app === 'ma' ? 'music' : x.app === 'homey' ? 'home' : 'ha'; } else delete x.app; }))),
+      b.view ? h('p', { class: 'hint' }, { left: 'Turns the view 45° to the left.', right: 'Turns the view 45° to the right.', home: 'Goes to this floor plan\'s home view.', fit: 'Shows the whole plan.' }[b.view])
+        : b.app ? h('label', { class: 'field wide-field' }, h('span', {}, 'App to open'),
+          h('select', { onchange: (e) => edit((x) => { x.app = e.target.value; x.icon = { ha: 'ha', ma: 'music', homey: 'home' }[x.app] || x.icon; if (!x.name || /^(Home Assistant|Music Assistant|Homey)$/.test(x.name)) x.name = { ha: 'Home Assistant', ma: 'Music Assistant', homey: 'Homey' }[x.app]; }) },
+            [['ha', 'Home Assistant'], ['ma', 'Music Assistant'], ['homey', 'Homey']].map(([v, l]) => h('option', { value: v, selected: v === b.app }, l + ((this.ctx.apps?.() || []).some((a) => a.id === v) ? '' : ' (not connected here)')))))
+        : entityField('Controls (tap toggles or runs, hold for details)', b.entity, (v) => v && edit((x) => (x.entity = v))),
       h('div', { class: 'row' }, h('div', { class: 'row-label' }, 'Shows'),
         h('select', { 'aria-label': 'What the button shows', onchange: (e) => { this.btnSize = e.target.value; edit((x) => (x.size = e.target.value)); } },
           [['small', 'Icon only'], ['expand', 'Icon, opens its controls when tapped'], ['large', 'Name and controls']].map(([v, l]) => h('option', { value: v, selected: v === (b.size || 'small') }, l)))),
@@ -1239,8 +1309,8 @@ export class Editor {
       b.dock ? null : this.gridSeg(),
       h('div', { class: 'row' }, h('div', { class: 'row-label' }, 'Where'),
         seg([[false, 'On the plan'], [true, 'Beside the plan']], !!b.dock, (v) => edit((x) => { if (v) { x.dock = true; } else { delete x.dock; x.at ||= centre(); } }))),
-      b.view ? null : this.gesturesPanel(b, b.entity, (fn) => edit((x) => fn(x)), { swipes: false }),
-      b.view ? null : this.groupEditor(b, edit),
+      b.view || b.app ? null : this.gesturesPanel(b, b.entity, (fn) => edit((x) => fn(x)), { swipes: false }),
+      b.view || b.app ? null : this.groupEditor(b, edit),
       h('p', { class: 'hint' }, b.dock ? (b.pos ? 'Placed beside the plan. Drag it to move it (it snaps to the grid); drop it on the strip at the top to put it back there.' : 'In the strip above the plan. Drag it anywhere around the plan to give it its own place.') : 'Drag it on the plan to move it.'),
       b.dock ? this.screenGridSeg() : null,
       h('button', { class: 'wide danger', onclick: () => this.deleteSelection() }, icon('trash'), 'Delete button'));

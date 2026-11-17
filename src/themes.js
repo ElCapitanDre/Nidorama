@@ -14,6 +14,7 @@ export const FONTS = {
   rounded: ['Rounded', "ui-rounded, 'SF Pro Rounded', 'Nunito', system-ui, sans-serif"],
   serif: ['Serif', "ui-serif, Georgia, 'Times New Roman', serif"],
   mono: ['Mono', "ui-monospace, 'Roboto Mono', Menlo, Consolas, monospace"],
+  nido: ['Nido (Inter and Space Grotesk)', "'Inter', system-ui, sans-serif"], // bundled with the app (open font licence)
   geometric: ['Geometric', "'Montserrat', 'Avenir Next', 'Century Gothic', system-ui, sans-serif"], // bundled with the app (open font licence)
 };
 export const SELECTION_STYLES = [['glow', 'Glow'], ['grid', 'Grid'], ['stripes', 'Stripes'], ['dots', 'Dots']];
@@ -36,6 +37,10 @@ const BUILTIN = [
   // with one tall slab to drag (`pages: 'slab'`, see controlpage.js). Built on the glass theme.
   { id: 'jack', name: 'Jack', builtin: true, accent: '#f2c14e', selection: { style: 'glow', color: '#ffe7ad' }, radius: 22, font: 'geometric', glass: true, caps: true, pages: 'slab',
     day: { bg: '#3a3d48', panel: '#ffffff', ink: '#ffffff' }, night: { bg: '#15161c', panel: '#ffffff', ink: '#ffffff' } },
+  // Nido: a calm, conceptual look. Deep green-black, rooms as soft tiles, amber for whatever is on,
+  // teal for what is linked; Space Grotesk headings over Inter. Pairs with the Nido plan style.
+  { id: 'nido', name: 'Nido', builtin: true, accent: '#F2B544', selection: { style: 'glow', color: '#F2B544' }, radius: 20, font: 'nido', style: 'nido',
+    day: { bg: '#0F1412', panel: '#161C19', ink: '#EEF2EE' }, night: { bg: '#0B0F0D', panel: '#121714', ink: '#E6EBE7' } },
   { id: 'neon', name: 'Neon grid', builtin: true, accent: '#b46bff', selection: { style: 'grid', color: '#c77dff' }, radius: 6, font: 'mono',
     day: { bg: '#17122b', panel: '#211a3d', ink: '#f1eaff' }, night: { bg: '#0c0919', panel: '#151029', ink: '#f1eaff' } },
 ];
@@ -117,6 +122,7 @@ export function applyTheme(force = false) {
   document.documentElement.classList.toggle('glass', !!t.glass);
   document.documentElement.classList.toggle('frost', glassy(t));
   document.documentElement.classList.toggle('jack', t.id === 'jack');
+  document.documentElement.classList.toggle('nido', t.id === 'nido');
   document.documentElement.classList.toggle('caps', !!t.caps);
   document.documentElement.dataset.pages = t.pages || '';
   if (t.id === 'original') return sel;
@@ -129,6 +135,7 @@ export function applyTheme(force = false) {
     '--line': 'rgba(255, 255, 255, 0.26)', '--chip': 'rgba(40, 42, 80, 0.36)', '--on-accent': '#1c1c2e', 'color-scheme': 'dark',
     '--glass': String(L.frost?.glass ?? 0.15), '--glass-btn': String(L.frost?.buttons ?? 0.34), '--wtext': String(L.frost?.text ?? 1) });
   if (t.id === 'jack') Object.assign(set, { '--chip': 'rgba(18, 18, 22, 0.42)', '--on-accent': '#1a1a1e', '--accent-soft': '#ffe7ad', '--bg': dim && L.wallpaper ? `linear-gradient(#00000055, #00000055), ${wallpaper(L, night)}` : !night && (!L.wallpaper || L.wallpaper === 'sand') ? `linear-gradient(#2a1f1038, #2a1f1038), ${wallpaper(L, night)}` : wallpaper(L, night) });
+  if (t.id === 'nido') Object.assign(set, { '--muted': '#9AA59F', '--line': '#26302C', '--chip': '#1A211E', '--on-accent': '#0F1412', '--accent-soft': '#F2B544', '--ok': '#5FC4B0', 'color-scheme': 'dark' });
   for (const [k, v] of Object.entries(set)) st.setProperty(k, v);
   return sel;
 }
@@ -182,7 +189,8 @@ function editTheme(start, changed) {
 /** The Theme part of Settings. `changed` re-applies the theme and redraws; `saveText(name, text)` hands over a file. */
 export function themeSettings({ changed, saveText }) {
   const t = current(), custom = !t.builtin;
-  const pick = (id) => { device.theme = id; saveDevice(); changed(); };
+  // A theme can come with a plan style of its own (Nido): choosing the theme picks it too; the style can still be changed after.
+  const pick = (id) => { device.theme = id; const st = themeById(id).style; if (st) device.style = st; saveDevice(); changed(); };
   const fresh = () => editTheme({ ...BASE, ...structuredClone(t), id: `theme-${Date.now().toString(36)}`, name: t.builtin ? 'My theme' : `${t.name} copy`, builtin: undefined }, changed);
   const load = async () => {
     const file = await pickFile('.json,application/json');

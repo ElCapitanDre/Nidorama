@@ -1,6 +1,9 @@
 import '@fontsource/montserrat/latin-300.css';
 import '@fontsource/montserrat/latin-400.css';
 import '@fontsource/montserrat/latin-500.css';
+import '@fontsource/inter/latin-400.css';
+import '@fontsource/inter/latin-600.css';
+import '@fontsource/space-grotesk/latin-600.css';
 import './style.css';
 import './controlpage.js';
 import { NidoramaScene, STYLES } from './scene.js';
@@ -82,7 +85,8 @@ const scrim = h('div', { class: 'scrim hidden', onclick: () => closeSheet() });
 const dimmer = h('div', { class: 'dimmer hidden' });
 const updateChip = h('button', { class: 'chip update-chip hidden', onclick: () => askToUpdate(true) });
 const fileInput = h('input', { type: 'file', class: 'hidden' }); // any file: a backup kept in a storage app is often not labelled as JSON
-root.append(h('main', { class: 'plan-area' }, stage, pageHost, freeLayer, topbar, dock, viewCtl, updateChip, editBar), panelBox, scrim, sheet, dimmer, fileInput);
+const layersBox = h('nav', { class: 'nido-layers hidden', 'aria-label': 'Levels' }); // Nido: the home's floors as layers (renderLayers)
+root.append(h('main', { class: 'plan-area' }, stage, pageHost, freeLayer, topbar, dock, layersBox, viewCtl, updateChip, editBar), panelBox, scrim, sheet, dimmer, fileInput);
 
 const view = new NidoramaScene(canvas);
 view.onRender = () => { positionLabels(); editor.draw(); if (angleEl) angleEl.textContent = `${Math.round(view.cam.az)}°`; };
@@ -100,6 +104,7 @@ const editor = new Editor({
     freePosAt: (x, y) => freePosAt(x, y),
     startButton: (room) => startButton(room),
     startsHere: (room) => startsHere(room),
+    apps: () => integrationApps(),
     addLevel: (copyWalls) => {
       const hm = home(), src = level();
       const name = prompt('Name of the new level', `Level ${hm.levels.length + 1}`);
@@ -145,7 +150,7 @@ let syncedWith = null;
 hub.on((kind, id, p) => {
   if (kind === 'status') {
     renderStatus();
-    if (p === hub.ha && p.status === 'connected' && syncedWith !== p) { syncedWith = p; syncWithHA(p); }
+    if (p === hub.ha && p.status === 'connected' && syncedWith !== p) { syncedWith = p; syncWithHA(p); setTimeout(findMusicAssistant, 1500); }
     if (openSheet === 'settings' && !document.activeElement?.matches('input')) renderSheet();
   }
   syncFromStates();
@@ -307,7 +312,39 @@ function valid(v) {
   const hm = v && getHome(v.homeId);
   return !!hm && !!(v.kind === 'page' ? hm.pages?.find((p) => p.id === v.id) : hm.levels.find((l) => l.id === v.id));
 }
-function show(target, { room = null, keepEdit = false } = {}) {
+/** The move between two plans of the same home (#128): from the whole site down into a level, back out to the
+ *  site, or up / down a floor. A picture of the old view goes one way while the new view arrives from the other. */
+function moveKind(from, to) {
+  if (!from || !to || from === to || editMode) return null;
+  if (from.site && !to.site) return 'in';
+  if (!from.site && to.site) return 'out';
+  if (from.site || to.site) return null;
+  const a = from.floor || 0, b = to.floor || 0;
+  return b > a ? 'up' : b < a ? 'down' : 'side';
+}
+function playMove(kind, picture) {
+  if (!kind || !stage.animate) return;
+  const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const T = calm ? 220 : 560, ease = 'cubic-bezier(.2,.7,.2,1)';
+  const NEW = { in: ['scale(0.72)', 'scale(1)'], out: ['scale(1.45)', 'scale(1)'], up: ['translateY(-22%) scale(0.94)', 'none'], down: ['translateY(22%) scale(0.94)', 'none'], side: ['translateX(6%)', 'none'] }[kind];
+  const OLD = { in: 'scale(1.7)', out: 'scale(0.62)', up: 'translateY(28%) scale(1.04)', down: 'translateY(-28%) scale(1.04)', side: 'translateX(-6%)' }[kind];
+  if (!calm) stage.animate([{ transform: NEW[0], opacity: 0.35 }, { transform: NEW[1], opacity: 1 }], { duration: T, easing: ease });
+  else stage.animate([{ opacity: 0.2 }, { opacity: 1 }], { duration: T });
+  if (!picture) return;
+  const img = h('img', { class: 'move-picture', src: picture, alt: '' });
+  const r = stage.getBoundingClientRect(), p = stage.parentElement.getBoundingClientRect();
+  Object.assign(img.style, { left: `${r.left - p.left}px`, top: `${r.top - p.top}px`, width: `${r.width}px`, height: `${r.height}px` });
+  stage.parentElement.insertBefore(img, stage.nextSibling);
+  img.animate([{ transform: 'none', opacity: 1 }, { transform: calm ? 'none' : OLD, opacity: 0 }], { duration: T, easing: ease, fill: 'forwards' }).onfinish = () => img.remove();
+}
+function show(target, opts = {}) {
+  const before = cur?.kind === 'level' && level(), same = before && target?.kind === 'level' && target.homeId === cur.homeId && target.id !== cur.id;
+  const to = same ? home()?.levels.find((L) => L.id === target.id) : null, kind = same ? moveKind(before, to) : null;
+  const picture = kind && !matchMedia('(prefers-reduced-motion: reduce)').matches ? view.snapshot() : null;
+  showNow(target, opts);
+  if (kind && cur?.id === target.id) playMove(kind, picture);
+}
+function showNow(target, { room = null, keepEdit = false } = {}) {
   if (!valid(target)) target = firstView();
   if (editor.active) exitEdit(true);
   cur = target;
@@ -908,9 +945,27 @@ function startLabel() {
 /** The apps of the platforms Nidorama is connected to. */
 function integrationApps() {
   const out = [];
-  if (hub.ha || window.__NIDORAMA_ADDON__) out.push({ name: 'Home Assistant', icon: 'ha', open: () => native.openHomeAssistantApp(device.haUrl) });
-  if (device.homey?.key) out.push({ name: 'Homey', icon: 'home', open: () => native.openApp('app.homey', 'https://my.homey.app') });
+  if (hub.ha || window.__NIDORAMA_ADDON__) out.push({ id: 'ha', name: 'Home Assistant', icon: 'ha', open: () => native.openHomeAssistantApp(device.haUrl) });
+  if (musicAssistant) out.push({ id: 'ma', name: 'Music Assistant', icon: 'music', open: () => window.open(musicAssistant, '_blank', 'noopener') });
+  if (device.homey?.key) out.push({ id: 'homey', name: 'Homey', icon: 'home', open: () => native.openApp('app.homey', 'https://my.homey.app') });
   return out;
+}
+/** Music Assistant (#127): found through Home Assistant, by its sidebar panel (the add-on) or its integration.
+ *  The address opened: the panel inside Home Assistant, else the Music Assistant server's own page (port 8095). */
+let musicAssistant = null;
+async function findMusicAssistant() {
+  musicAssistant = null;
+  const base = (window.__NIDORAMA_ADDON__ ? location.origin : hub.ha?.url || '').replace(/\/$/, '');
+  if (!base || !app.ask) return;
+  try {
+    const panels = await app.ask({ type: 'get_panels' });
+    const p = Object.values(panels || {}).find((x) => /music[ _-]?assistant/i.test(`${x.url_path} ${x.title || ''} ${x.config?.ingress || ''}`));
+    if (p) musicAssistant = `${base}/${p.url_path}`;
+  } catch { /* not allowed or not connected */ }
+  if (!musicAssistant) {
+    const found = Object.entries(app.conn?.states || {}).some(([id, x]) => id.startsWith('media_player.') && (x.attributes?.mass_player_type || x.attributes?.mass_player_id));
+    if (found) { try { const u = new URL(base); musicAssistant = `${u.protocol}//${u.hostname}:8095`; } catch { /* no address */ } }
+  }
 }
 let moreOpen = false; // whether "Settings and more" is open in the More menu; closed again each time the menu is
 function moreSheet() {
@@ -937,8 +992,8 @@ function moreSheet() {
   if (hm && !editMode) items.push(menuItem('gear', 'Settings and more', tucked ? 'integrations, edit, settings, requests' : null, () => { moreOpen = !moreOpen; renderSheet(); }, icon(moreOpen ? 'down' : 'chevron')));
   if (tucked) return h('div', { class: 'menu' }, items);
   const apps = integrationApps();
-  if (apps.length === 1) items.push(menuItem(apps[0].icon, `Open ${apps[0].name}`, null, () => { closeSheet(); apps[0].open(); }));
-  else if (apps.length > 1) items.push(menuItem('link', 'Integrations', apps.map((a) => a.name).join(', '), () => { openSheet = { integrations: true }; renderSheet(); }, icon('chevron')));
+  // Each connected app is one tap away (#127): Home Assistant, Music Assistant, Homey.
+  for (const a of apps) items.push(menuItem(a.icon, `Open ${a.name}`, null, () => { closeSheet(); a.open(); }));
   // The one way into edit mode (and out of it), #48.
   if (hm) items.push(editMode
     ? menuItem('check', 'Finish editing', 'save and go back to using the dashboard', () => setEditMode(false))
@@ -1207,6 +1262,7 @@ function buttonActions(b) {
   if (editor.active) return [() => { editor.tool = 'select'; editor.select({ type: 'button', id: b.id }); }, () => {}];
   if (b.size === 'expand' && !b.view && openBtn !== b.id && stepperOf(b.entity)) return [() => holdOpen(b.id), () => { openSheet = { thing: { object: b } }; renderSheet(); }];
   if (b.view) return [() => viewAction(b.view), () => viewAction(b.view)];
+  if (b.app) { const go = () => { const a = integrationApps().find((x) => x.id === b.app); if (a) a.open(); else toast('That app is not connected on this device.'); }; return [go, go]; } // #127
   if (b.gestures?.tap || b.gestures?.hold) {
     const thing = { object: { id: b.id, name: b.name, entity: b.entity } };
     const gt = gestureFor(b.gestures, 'tap', b.entity), gh = gestureFor(b.gestures, 'hold', b.entity);
@@ -1315,6 +1371,29 @@ function placeFree(el, p) {
   Object.assign(el.style, { left: p.h === 'l' ? `${p.x}px` : '', right: p.h === 'r' ? `${p.x}px` : '', top: p.v === 't' ? `${p.y}px` : '', bottom: p.v === 'b' ? `${p.y}px` : '' });
 }
 /** The strip under the top bar (the user's own menus, then this level's buttons that have no place of their own), and the buttons placed around the plan. */
+/** Nido plan style: the home's floors as a list of layers over the plan, each with its layers mark; tap one to go there. */
+// The layers mark with one of its three sheets lit: top for the highest floor, bottom for the ground floor.
+const layerMark = (pos, on) => {
+  const one = (d, me) => `<path d="${d}" fill="${me && pos === 'top' && on ? '#F2B544' : 'none'}" stroke="${me ? (on ? '#F2B544' : '#5FC4B0') : '#3A4642'}" stroke-width="1.6" stroke-linejoin="round"/>`;
+  const el = document.createElement('span');
+  el.innerHTML = `<svg width="22" height="22" viewBox="0 0 26 26" aria-hidden="true">${one('M13 3 24 9 13 15 2 9z', pos === 'top')}${one('M2 13.5 13 19.5 24 13.5', pos === 'mid')}${one('M2 18 13 24 24 18', pos === 'low')}</svg>`;
+  return el.firstChild;
+};
+function renderLayers() {
+  const hm = home(), L = level();
+  const show = !!(hm && L && !editor.active && view.styleId === 'nido');
+  const list = show ? hm.levels.filter((x) => !x.roof && !x.hideList || x === L).sort((a, b) => (b.site ? 99 : (b.floor || 0)) - (a.site ? 99 : (a.floor || 0))) : [];
+  layersBox.classList.toggle('hidden', list.length < 2);
+  if (list.length < 2) return void layersBox.replaceChildren();
+  const floors = list.filter((x) => !x.site);
+  const top = Math.max(...floors.map((x) => x.floor || 0)), low = Math.min(...floors.map((x) => x.floor || 0));
+  layersBox.replaceChildren(...list.map((x) => {
+    const on = x === L, f = x.floor || 0, pos = f === top && top !== low ? 'top' : f === low ? 'low' : 'mid';
+    return h('button', { class: on ? 'on' : '', 'aria-current': on ? 'page' : 'false', onclick: () => { if (!on) show_({ homeId: hm.id, kind: 'level', id: x.id }); } },
+      x.site ? icon('home') : layerMark(pos, on), h('span', {}, x.name));
+  }));
+}
+const show_ = (t) => show(t);
 function renderDock() {
   const hm = home(), kids = [], free = [];
   if (hm) for (const m of hm.menus || []) kids.push(h('button', { class: 'chip small', onclick: () => { openSheet = { menu: m.id }; renderSheet(); } }, h('span', {}, m.name), icon('down')));
@@ -1330,6 +1409,7 @@ function renderDock() {
   }
   dock.replaceChildren(...kids);
   freeLayer.replaceChildren(...free);
+  renderLayers();
   dock.classList.toggle('hidden', !kids.length);
   dock.classList.toggle('editing', editor.active);
   root.classList.toggle('has-dock', kids.length > 0);
@@ -1429,6 +1509,7 @@ const STYLE_ABOUT = {
   clay: 'Everything in one pale clay colour, like an architect\'s model.',
   plan: 'A flat plan seen from straight above.',
   blueprint: 'White lines on blue, from straight above.',
+  nido: 'Conceptual: rooms as soft dark tiles, amber where lights are on, and the other floors drawn faintly as layers.',
 };
 /** The plan style this device uses. Photo render is experimental, so without that mode it falls back to Realistic. */
 const planStyle = () => (device.style === 'photo' && !device.experimental ? 'realistic' : device.style);
@@ -1527,7 +1608,7 @@ function lookSettings() {
     h('div', { class: 'msep' }),
     h('h3', { class: 'pad' }, 'Buttons / interface'),
     h('p', { class: 'hint' }, 'Everything around the plan: panels, buttons, menus and Widgets dashboards. A theme sets their colours, corners and lettering.'),
-    themeSettings({ changed: () => { useTheme(true); if (openSheet === 'settings') renderSheet(); }, saveText }),
+    themeSettings({ changed: () => { useTheme(true); if (level() && !editor.active && view.styleId !== planStyle()) { view.setStyle(planStyle()); afterStyle?.(); buildLabels(); syncFromStates(); } if (openSheet === 'settings') renderSheet(); }, saveText }),
     device.theme === 'frost' || device.theme === 'jack' ? frostSettings() : null,
     h('div', { class: 'menu-row' }, icon('sun'), h('span', { class: 'grow' }, 'Day / night'),
       seg([['auto', 'Auto'], ['day', 'Day'], ['night', 'Night']], device.dayNight, (v) => { device.dayNight = v; saveDevice(); applyDayNight(); renderSheet(); })),
@@ -2099,6 +2180,15 @@ async function checkForUpdate(manual = false) {
  * Home) it asks at most every 4 hours for the same update.
  */
 let askedAt = 0;
+/** What an update brings (#130): a few short lines, new and improved first, then fixes; at most six in all. */
+function whatsNew(notes) {
+  if (!notes || !(notes.add?.length || notes.fix?.length)) return null;
+  const MAX = 6, add = notes.add.slice(0, MAX), fix = notes.fix.slice(0, Math.max(0, MAX - add.length)), more = notes.add.length + notes.fix.length - add.length - fix.length;
+  return h('div', { class: 'whats-new' },
+    add.length ? [h('h3', {}, 'New and improved'), h('ul', {}, add.map((t) => h('li', {}, t)))] : null,
+    fix.length ? [h('h3', {}, 'Fixes'), h('ul', {}, fix.map((t) => h('li', {}, t)))] : null,
+    more > 0 ? h('p', { class: 'hint' }, `and ${more} more`) : null);
+}
 function askToUpdate(force = false) {
   if (!update || document.querySelector('.update-ask') || updateBusy.startsWith('Downloading')) return;
   const last = device.updateAsked?.build === update.build ? device.updateAsked.at : 0;
@@ -2113,6 +2203,7 @@ function askToUpdate(force = false) {
   const draw = () => body.replaceChildren(...nodes(
     h('div', { class: 'panel-head' }, icon('update'), h('h2', {}, 'Update available')),
     h('p', { class: 'hint' }, `Nidorama ${update.version} is available (you have ${VERSION}).`),
+    whatsNew(update.notes),
     h('h3', {}, backedUp ? '1. Backup saved' : '1. Save a backup first'),
     backedUp ? h('p', { class: 'hint' }, 'Your homes, dashboards and settings are in the backup file.')
       : h('p', { class: 'hint' }, `An update keeps everything as it is, but a backup means nothing can be lost if something goes wrong. ${backupAge()}`),
@@ -2162,6 +2253,7 @@ function layoutStage() {
 new ResizeObserver(layoutStage).observe(stage.parentElement);
 /** Called after the plan's style is set: keeps the page background, backdrop and camera lock right. */
 function afterStyle() {
+  renderLayers();
   root.dataset.style = view.styleId;
   if (view.styleId === 'photo' && view.isolated) view.isolate(null);
   if (view.styleId === 'photo' && level()) return applyPhoto();

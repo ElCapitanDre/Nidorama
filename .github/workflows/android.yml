@@ -39,6 +39,8 @@ jobs:
           # The requests this build contains: every #number in the commits since the build before it.
           reqs=$(git log -1 --format=%B | grep -o '#[0-9]\+' | tr -d '#' | sort -un | paste -sd, -)
           echo "requests=$reqs" >> "$GITHUB_OUTPUT"
+          # What this version brings (#130): its lines from the add-on's changelog, shown in the app's update prompt.
+          { echo 'notes<<NOTES_END'; awk -v v="## $base" '$0==v{f=1;next} /^## /{f=0} f && /^- /' addon/nidorama/CHANGELOG.md; echo 'NOTES_END'; } >> "$GITHUB_OUTPUT"
 
       # Signing key from the repository's secrets, when it has one (see android/app/build.gradle).
       - name: Signing key
@@ -121,6 +123,11 @@ jobs:
           body: |
             <!-- nidorama:channel=${{ steps.v.outputs.channel }} requests=${{ steps.v.outputs.requests }} -->
             Channel: ${{ steps.v.outputs.label }}
+
+            ### What's new
+            <!-- nidorama:notes -->
+            ${{ steps.v.outputs.notes }}
+            <!-- /nidorama:notes -->
 
             Android build of `${{ github.ref_name }}` at ${{ github.sha }}.
             **Before you update, save a backup:** in the app, Settings → Updates and backup → Back up this device. It keeps your homes, dashboards and settings in one file; Restore a backup, in the same place, brings them back.

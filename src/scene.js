@@ -8,7 +8,8 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { parseGLB } from './gltf.js';
 import { FLOOR_MATERIALS } from './catalog.js';
-import { upgradeSite, planLevels, placeOf, floorOf, levelZ, eaveOf, piecesOf, boundsOf, toSite, ROOF_MATERIALS } from './site.js';
+import { finishTexture, finishColor } from './finishes.js';
+import { upgradeSite, planLevels, placeOf, floorOf, levelZ, eaveOf, piecesOf, boundsOf, toSite, fromSite, ROOF_MATERIALS } from './site.js';
 import { blobURL, loadBlob } from './blobs.js';
 import { fetchPhotoFromHA } from './store.js';
 import { levelBounds, polyBounds, dist, pointInPoly, wallLength, wallAt, wallDir, wallPoints, wallArc } from './geom.js';
@@ -27,6 +28,8 @@ export const STYLES = {
   cyber: { label: 'Cyberpunk', camera: 'persp', elevation: 52, cut: 1.1, mat: 'cyber', shadows: false, bg: ['#0b0718', '#06040e'] },
   clay: { label: 'Clay model', camera: 'persp', elevation: 50, cut: 1.25, mat: 'clay', shadows: true, refine: true, ground: true, bg: ['#e9e6e1', '#15161c'] },
   plan: { label: 'Flat plan', camera: 'ortho', elevation: 90, cut: 0.25, mat: 'lambert', shadows: false },
+  // Nido: conceptual tiles in deep greens, low walls, amber light, the other floors as faint layers.
+  nido: { label: 'Nido', camera: 'persp', elevation: 52, cut: 0.35, mat: 'nido', shadows: false, layers: true, bg: ['#0F1412', '#0B0F0D'] },
   blueprint: { label: 'Blueprint', camera: 'ortho', elevation: 90, cut: 0.25, mat: 'blueprint', shadows: false, bg: ['#1b4e8f', '#0d2c55'] },
 };
 const WALL = { top: '#fffdf9', side: '#e3dcd2' };
@@ -189,6 +192,7 @@ export class NidoramaScene {
     this._buildLights();
     this._buildRooms();
     if (!level.site) this._buildPieces(level, 0, true);
+    if (this.style.layers && !level.site) this._buildLayers(level);
     for (const [id, on, lvl] of lightStates) this.setLight(id, on, lvl, true);
     this.setNight(this.night);
     if (this.style.overlay) this._overlayOnly();
@@ -204,6 +208,10 @@ export class NidoramaScene {
     const base = {};
     if (o.opacity != null) Object.assign(base, { transparent: true, opacity: o.opacity, depthWrite: false });
     if (m === 'blueprint') return new THREE.MeshBasicMaterial({ color: o.fill || '#1b4e8f', ...base, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+    if (m === 'nido') { // flat, unlit deep greens: darker things become the floor tone, lighter ones the furniture tone; the edges draw the shapes
+      const l = new THREE.Color(color).getHSL({}).l, c = new THREE.Color('#161D1A').lerp(new THREE.Color('#34403B'), Math.min(1, Math.max(0, (l - 0.15) / 0.75)));
+      return new THREE.MeshBasicMaterial({ color: c, ...base, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+    }
     if (m === 'cyber') { // every colour becomes a deep, saturated dark; the outlines carry the picture
       const c = new THREE.Color(color), hsl = c.getHSL({});
       c.setHSL(hsl.s < 0.08 ? 0.72 : hsl.h, 0.55, 0.07 + hsl.l * 0.1);
@@ -236,7 +244,7 @@ export class NidoramaScene {
   }
   /** A texture of one of the user's photos, or null while it is still loading (the scene rebuilds when it arrives). */
   _photoTexture(id, repeatX = 1, repeatY = 1) {
-    if (!id || ['blueprint', 'clay', 'pear', 'cyber'].includes(this.style.mat)) return null;
+    if (!id || ['blueprint', 'clay', 'pear', 'cyber', 'nido'].includes(this.style.mat)) return null;
     const have = this.photos.get(id);
     if (have instanceof HTMLImageElement) {
       const t = new THREE.Texture(have);
@@ -306,14 +314,14 @@ export class NidoramaScene {
   }
 
   _edges(mesh) {
-    if (this.style.mat !== 'blueprint' && this.style.mat !== 'cyber') return;
+    if (this.style.mat !== 'blueprint' && this.style.mat !== 'cyber' && this.style.mat !== 'nido') return;
     let src = mesh.geometry;
     if (src.type === 'RoundedBoxGeometry') { // rounded corners have no hard edges: outline the plain box
       src.computeBoundingBox();
       const sz = src.boundingBox.getSize(new THREE.Vector3());
       src = new THREE.BoxGeometry(sz.x, sz.y, sz.z);
     }
-    const lines = new THREE.LineSegments(new THREE.EdgesGeometry(src, 30), (this._lineMats ||= {})[this.style.mat] ||= new THREE.LineBasicMaterial({ color: this.style.mat === 'cyber' ? '#35e6ff' : '#e8f1ff' }));
+    const lines = new THREE.LineSegments(new THREE.EdgesGeometry(src, 30), (this._lineMats ||= {})[this.style.mat] ||= new THREE.LineBasicMaterial({ color: this.style.mat === 'cyber' ? '#35e6ff' : this.style.mat === 'nido' ? '#44514C' : '#e8f1ff' }));
     lines.position.copy(mesh.position);
     lines.rotation.copy(mesh.rotation);
     (mesh.parent || this.scene).add(lines);
@@ -429,12 +437,23 @@ export class NidoramaScene {
     const dx = b[0] - a[0], dy = b[1] - a[1];
     const len = Math.hypot(dx, dy);
     if (len < 1e-3 || z1 - z0 < 1e-3) return null;
-    const m = new THREE.Mesh(new THREE.BoxGeometry(len, z1 - z0, thickness), mat);
+    const m = new THREE.Mesh(new THREE.BoxGeometry(len, z1 - z0, thickness), typeof mat === 'function' ? mat(len, z1 - z0) : mat);
     m.position.copy(V((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (z0 + z1) / 2));
     m.rotation.y = -Math.atan2(dy, dx);
     return this._add(m, opts);
   }
 
+  /** A wall with its own finishes (#129): its right-hand face (as drawn from a to b) and its left-hand face each
+   *  painted or clad; the ends and the top stay plain. Returns materials for one piece of the wall. */
+  _wallMats(w, top, plain) {
+    const face = (sd, len, hgt) => {
+      if (!sd) return this._mat(plain, { rough: 0.9 });
+      const tex = this.style.mat === 'clay' || this.style.mat === 'pear' ? null : finishTexture(sd, len, hgt);
+      return this._mat(this.style.mat === 'clay' ? plain : finishColor(sd), { rough: 0.9, map: tex, bump: !!tex });
+    };
+    const ends = this._mat(plain, { rough: 0.9 }), cap = this._mat(top, { rough: 0.9 });
+    return (len, hgt) => [ends, ends, cap, ends, face(w.sides.r, len, hgt), face(w.sides.l, len, hgt)];
+  }
   _buildWalls() {
     const st = this.style, L = this.level;
     const bp = st.mat === 'blueprint';
@@ -482,7 +501,7 @@ export class NidoramaScene {
         if (s < len0 + eb) strip(s, len0 + eb, 0, w.thickness, zLo, zHi, mat, opts);
       };
       const cut = Math.min(w.height, st.cut);
-      build(base, cut, wallMats, {}, true);
+      build(base, cut, w.sides && !['blueprint', 'cyber', 'nido'].includes(st.mat) ? this._wallMats(w, top, side) : wallMats, {}, true);
       if (st.refine) build(cut, w.height, shadowMat, { layer: 1 }, false);
       if (!bp) for (const o of ops) this._buildOpening(w, o, strip, cut, len0);
       if (st.mat === 'pbr') { // skirting boards on both faces, broken at doorways
@@ -506,6 +525,11 @@ export class NidoramaScene {
     if (zt - zb < 0.02) return;
     const mat = this._mat(o.color || '#f3f0ea', { rough: 0.55 });
     if (o.type === 'door') {
+      if (o.trim) { // a painted frame around the doorway (#129)
+        const tm = this._mat(o.trim, { rough: 0.5 }), fw = Math.min(0.06, o.width / 8), th = w.thickness + 0.03, np = { cast: false };
+        strip(o.offset - fw, o.offset, 0, th, zb, zt, tm, np); strip(o1, o1 + fw, 0, th, zb, zt, tm, np);
+        if (o.head <= cut + 1e-6) strip(o.offset - fw, o1 + fw, 0, th, zt, Math.min(cut, zt + fw), tm, np);
+      }
       const side = o.swing === -1 ? -1 : 1, end = o.hinge === 'end';
       const leaf = (hingeT, along, width) => { // a leaf standing open about 80° from its closed position
         const hp = wallAt(w, hingeT), d = wallDir(w, hingeT), a = (80 * Math.PI) / 180;
@@ -662,7 +686,7 @@ export class NidoramaScene {
       if (r.polygon.length < 3) continue;
       const z = r.outdoor ? -0.01 : 0.02;
       const sel = this.selection, pat = sel && sel.style !== 'glow' ? this._selTexture(sel.style) : null;
-      const tint = flatPolygon(r.polygon, z, new THREE.MeshBasicMaterial({ color: sel?.color || (this.style.mat === 'blueprint' ? '#9cc4ff' : this.style.mat === 'cyber' ? '#ff3df2' : '#ffd9a8'), map: pat, transparent: true, opacity: 0, depthWrite: false }));
+      const tint = flatPolygon(r.polygon, z, new THREE.MeshBasicMaterial({ color: sel?.color || (this.style.mat === 'blueprint' ? '#9cc4ff' : this.style.mat === 'cyber' ? '#ff3df2' : this.style.mat === 'nido' ? '#F2B544' : '#ffd9a8'), map: pat, transparent: true, opacity: 0, depthWrite: false }));
       tint.renderOrder = 2;
       tint.userData.room = r.id;
       tint.userData.overlay = true;
@@ -709,6 +733,22 @@ export class NidoramaScene {
       }
     } finally {
       this.scene = root; this.style = style; this.level = site; this.simple = simple;
+    }
+  }
+  /** Nido: the home's other floors as faint outlines above and below this one, like a stack of layers. */
+  _buildLayers(level) {
+    const mine = floorOf(level), mat = new THREE.LineBasicMaterial({ color: '#5FC4B0', transparent: true, opacity: 0.32, depthWrite: false });
+    for (const L of planLevels(this.home)) {
+      if (L === level || L.roof || floorOf(L) === mine) continue;
+      const z = (floorOf(L) - mine) * 1.6, from = placeOf(L), to = placeOf(level);
+      const map = (p) => fromSite(to, toSite(from, p));
+      const outlines = L.rooms.filter((r) => !r.outdoor && r.polygon?.length > 2).map((r) => r.polygon);
+      for (const poly of outlines) {
+        const pts = [...poly, poly[0]].map((p) => { const q = map(p); return V(q[0], q[1], z); });
+        const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat);
+        line.userData.layer = L.id;
+        this.scene.add(line);
+      }
     }
   }
   /** A level's roof pieces (#114), each a rectangle turned on its own, starting at the level's eave height. */
@@ -1177,6 +1217,10 @@ export class NidoramaScene {
     this.accRT = new THREE.WebGLRenderTarget(W, H, { ...opts, depthBuffer: false });
   }
 
+  /** A picture of what is on screen now (for the move between dashboards, #128). Null when it cannot be read. */
+  snapshot() {
+    try { if (!this.scene) return null; this.renderer.setRenderTarget(null); this.renderer.render(this.scene, this.camera); return this.renderer.domElement.toDataURL('image/png'); } catch { return null; }
+  }
   /** Draw a quick frame now, then (in refine styles) keep improving it while idle. */
   requestRender() {
     if (this.tracing) return;
