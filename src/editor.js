@@ -13,6 +13,7 @@ import { CATALOG, CATEGORIES, FLOOR_MATERIALS, makeObject, uid } from './catalog
 import { snap, round, dist, distToSeg, pointInPoly, pointInObject, objectCorners, centreOf, rotateAbout, polyBounds, wallLength, wallAt, wallDir, wallPoints, wallNearest, bearing } from './geom.js';
 import { thumb } from './thumbs.js';
 import { FINISHES, SWATCHES, finishName, finishColor } from './finishes.js';
+import { MY_CAT, cleanCatalog, itemFromObject, copiesOf } from './mymodels.js';
 import { haDashboards, frameGuide, insideHA } from './webpanel.js';
 import { dotColour, dotKindOf } from './themes.js';
 import { boundsOf, ROOF_TYPES, ROOF_MATERIALS, MAX_FLOOR, floorName, planLevels, placeOf, floorOf, floorsOf, piecesOf, pieceCorners, newPiece, outlineBox, outsideCorners, toSite, fromSite, across, floorBelow } from './site.js';
@@ -78,6 +79,14 @@ export function mirrorObject(L, o) {
   }
 }
 function lightsOf(L, o) { return L.lights.filter((l) => l.fixture === o.id); }
+/** Give a placed copy a model's new shape and colours, keeping its own size, place, angle, name, entity and lights. */
+function refitCopy(L, ob, item) {
+  const b = ob.bounds, c = centreOf(ob), size = [b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]];
+  const { object: fresh } = makeObject({ ...item, size, z: b.min[2] }, c[0], c[1], ob.room);
+  ob.parts = fresh.parts;
+  ob.bounds = fresh.bounds;
+  if (item.light) for (const l of L.lights) if (l.fixture === ob.id && l.position) l.position[2] = round(b.min[2] + item.light.z * (size[2] / item.size[2]));
+}
 
 export class Editor {
   constructor({ view, stage, panel, ctx }) {
@@ -639,14 +648,15 @@ export class Editor {
     });
   }
   chooseLook(o) {
-    let cat = CATALOG.find((i) => i.id === o.kind)?.cat || this.cat;
+    let cat = this.allItems().find((i) => i.id === o.kind)?.cat || this.cat;
+    const cats = this.myItems().length ? [...CATEGORIES, MY_CAT] : CATEGORIES;
     const body = h('div', { class: 'menu' });
     const close = modal(body);
     const draw = () => body.replaceChildren(...nodes(
       h('div', { class: 'panel-head' }, h('h2', {}, `Change the look of ${o.name}`), h('button', { class: 'round small', 'aria-label': 'Close', onclick: () => close() }, icon('close'))),
       h('p', { class: 'hint' }, 'Only the shape and colours change. Its name, connected entity, light, position and angle are kept.'),
-      h('div', { class: 'cats' }, CATEGORIES.map((c) => h('button', { class: 'chip small' + (c === cat ? ' on' : ''), onclick: () => { cat = c; draw(); } }, c))),
-      h('div', { class: 'look-list' }, CATALOG.filter((i) => i.cat === cat).map((i) => this.catItem(i, i.id === o.kind, () => { close(); this.replaceLook(o, i); }, 'Use this look')))));
+      h('div', { class: 'cats' }, cats.map((c) => h('button', { class: 'chip small' + (c === cat ? ' on' : ''), onclick: () => { cat = c; draw(); } }, c))),
+      h('div', { class: 'look-list' }, this.itemsIn(cat).map((i) => this.catItem(i, i.id === o.kind, () => { close(); this.replaceLook(o, i); }, 'Use this look')))));
     draw();
   }
   /**
@@ -992,8 +1002,9 @@ export class Editor {
     return h('div', { class: 'stack' },
       h('p', { class: 'hint' }, this.placing ? `Tap the plan to place the ${this.placing.name.toLowerCase()}.` : 'Choose something, then tap the plan to place it.'),
       h('button', { class: 'wide', onclick: () => this.placeModel() }, icon('cube'), 'Realistic 3D models…'),
-      h('div', { class: 'cats' }, CATEGORIES.map((c) => h('button', { class: 'chip small' + (c === this.cat ? ' on' : ''), onclick: () => { this.cat = c; this.renderPanel(); } }, c))),
-      h('div', { class: 'catalog' }, CATALOG.filter((i) => i.cat === this.cat).map((i) => this.catItem(i, this.placing === i, () => { this.placing = i; this.renderPanel(); }, 'Place it'))));
+      h('div', { class: 'cats' }, [...CATEGORIES, MY_CAT].map((c) => h('button', { class: 'chip small' + (c === this.cat ? ' on' : ''), onclick: () => { this.cat = c; this.renderPanel(); } }, c))),
+      this.cat === MY_CAT && !this.myItems().length ? h('p', { class: 'hint' }, 'Nothing here yet. Place a piece, shape and colour it, then choose "Save as my model" on it: it can then be placed again, in this home and on every device it is shared with.') : null,
+      h('div', { class: 'catalog' }, this.itemsIn(this.cat).map((i) => this.catItem(i, this.placing?.id === i.id, () => { this.placing = i; this.renderPanel(); }, 'Place it'))));
   }
   /** One catalogue item: its picture (tap it to see it bigger) and its name (tap to choose it). */
   catItem(i, on, pick, action) {
@@ -1009,7 +1020,33 @@ export class Editor {
       h('div', { class: 'panel-head' }, h('h2', {}, i.name), h('button', { class: 'round small', 'aria-label': 'Close', onclick: () => close() }, icon('close'))),
       pic ? h('img', { src: pic, alt: `What the ${i.name.toLowerCase()} looks like`, width: 300, height: 300 }) : null,
       h('p', { class: 'hint' }, `${len(i.size[0])} wide · ${len(i.size[1])} deep · ${len(i.size[2])} high${i.light ? ' · can be a light' : ''}. Size and colours can be changed after it is placed.`),
-      h('button', { class: 'wide primary', onclick: () => { close(); pick(); } }, icon('check'), action)));
+      h('button', { class: 'wide primary', onclick: () => { close(); pick(); } }, icon('check'), action),
+      i.cat === MY_CAT ? h('button', { class: 'wide ghost danger', onclick: () => { close(); this.removeModel(i); } }, icon('trash'), 'Remove from My models') : null));
+  }
+
+  // ---------- My models: furniture of your own, kept in the home file ----------
+  myItems() { return cleanCatalog(this.home.catalog); }
+  allItems() { return [...CATALOG, ...this.myItems()]; }
+  itemsIn(cat) { return cat === MY_CAT ? this.myItems() : CATALOG.filter((i) => i.cat === cat); }
+  /** Save a placed piece as a model of your own. `update`: it is a copy of one already; change that model and every placed copy. */
+  saveAsModel(o, update = false) {
+    const old = update ? this.myItems().find((i) => i.id === o.kind) : null;
+    const name = old ? old.name : prompt('Name of your model', o.name)?.trim();
+    if (!name) return;
+    const item = itemFromObject(o, name, lightsOf(this.level, o).find((l) => l.position), old?.id, (old?.rev || 0) + 1);
+    if (!item) return void alert('This piece cannot be saved as a model.');
+    this.change((L) => {
+      const list = cleanCatalog(this.home.catalog), i = list.findIndex((x) => x.id === item.id);
+      if (i >= 0) list[i] = item; else list.push(item);
+      this.home.catalog = list;
+      if (old) { for (const { L: lv, o: ob } of copiesOf(this.home, item.id)) if (ob.id !== o.id) refitCopy(lv, ob, item); }
+      else L.objects.find((q) => q.id === o.id).kind = item.id; // the piece it was made from is its first copy
+    });
+  }
+  removeModel(item) {
+    if (!confirm(`Remove "${item.name}" from My models? Pieces already placed stay as they are.`)) return;
+    if (this.placing?.id === item.id) this.placing = null;
+    this.change(() => { this.home.catalog = cleanCatalog(this.home.catalog).filter((x) => x.id !== item.id); });
   }
 
   levelPanel() {
@@ -1065,6 +1102,14 @@ export class Editor {
         : h('button', { class: 'wide ghost', onclick: () => edit((lv, ob) => mirrorObject(lv, ob)) }, icon('rotate'), 'Flip left ↔ right'),
       h('div', { class: 'row' }, h('div', { class: 'row-label' }, 'Colours'),
         colours.map((c) => h('span', { class: 'colbtn' }, h('input', { type: 'color', value: c, 'aria-label': 'Colour', onchange: (e) => edit((lv, ob) => { for (const p of ob.parts) if (p.color === c) p.color = e.target.value; }) })))),
+      o.model ? null : (() => {
+        const mine = this.myItems().find((i) => i.id === o.kind), others = mine ? copiesOf(this.home, mine.id).length - 1 : 0;
+        return mine
+          ? h('div', { class: 'btns' },
+            h('button', { class: 'wide ghost', onclick: () => this.saveAsModel(o, true) }, icon('cube'), others ? `Update "${mine.name}" and ${others} other cop${others === 1 ? 'y' : 'ies'}` : `Update "${mine.name}"`),
+            h('button', { class: 'wide ghost', onclick: () => this.saveAsModel(o) }, icon('plus'), 'Save as a new model'))
+          : h('button', { class: 'wide ghost', onclick: () => this.saveAsModel(o) }, icon('cube'), 'Save as my model');
+      })(),
       h('div', { class: 'msep' }),
       h('h3', {}, 'Make it yours'),
       o.photo

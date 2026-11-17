@@ -37,7 +37,7 @@ function build(item) {
 
 /** A picture (data URL) of a catalogue item, `px` points square, seen from the front at three-quarter height. */
 export function thumb(item, px = 72) {
-  const key = `${item.id}:${px}`;
+  const key = `${item.id}:${item.rev || 0}:${px}`; // rev: a model of your own that was changed
   if (cache.has(key)) return cache.get(key);
   let url = '';
   try {

@@ -5,6 +5,7 @@ import { upgradeSite } from './site.js';
 import { buildSample, guideSample } from './sample.js';
 import { upgradeFile, oldKey, carryOver } from './legacy.js'; // first: it brings settings across before they are read
 import { uid, makeObject, CATALOG } from './catalog.js';
+import { cleanCatalog } from './mymodels.js';
 import { getBlob, putBlob, blobToDataURL, dataURLToBlob } from './blobs.js';
 import { share, remote, listAssets, getJSON, putJSON } from './remote.js';
 
@@ -102,6 +103,7 @@ export function normalizeHome(data) {
   home.name ||= 'Imported home';
   home.homeAssistant ||= {};
   home.pages ||= [];
+  if (home.catalog != null) home.catalog = cleanCatalog(home.catalog); // the home's own models (My models)
   for (const L of home.levels) {
     L.id ||= uid('level');
     L.name ||= 'Level';
