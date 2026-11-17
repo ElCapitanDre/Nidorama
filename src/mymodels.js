@@ -70,3 +70,70 @@ export function copiesOf(home, id) {
   for (const L of home.levels || []) for (const o of L.objects || []) if (o.kind === id) out.push({ L, o });
   return out;
 }
+
+// ---------- the model maker's working copy (phase 2) ----------
+// A draft is a model in metres, easier to edit than fractions: parts are { min: [x, y, z], max: [x, y, z],
+// color, shape?, radius?, opacity? }, x to the right, y to the front, z up, the back-left floor corner at 0.
+// Saving fits the model's box around its parts.
+export const MAX_DRAFT_PARTS = 60;
+const m3 = (v) => round(v, 3);
+const box = (parts) => [0, 1, 2].map((k) => [Math.min(...parts.map((p) => p.min[k])), Math.max(...parts.map((p) => p.max[k]))]);
+
+/** Any catalogue item (built-in or your own) as a draft. */
+export function toDraft(item) {
+  const [w, d, h] = item.size;
+  const parts = item.parts.map(([a, b, c, e, f, g, color, opts = {}]) => ({
+    min: [m3(a * w), m3(b * d), m3(c * h)], max: [m3(e * w), m3(f * d), m3(g * h)], color: String(color).toLowerCase(),
+    ...(opts.shape ? { shape: opts.shape } : {}), ...(opts.radius ? { radius: opts.radius } : {}), ...(opts.opacity != null ? { opacity: opts.opacity } : {}),
+  }));
+  return { name: item.name, z: item.z || 0, light: item.light ? { z: item.light.z * h } : null, parts };
+}
+/** A new model: one box. */
+export const blankDraft = () => ({ name: 'My model', z: 0, light: null, parts: [{ min: [0, 0, 0], max: [0.6, 0.6, 0.6], color: '#cfc8bd' }] });
+
+/** The size of the box around a draft's parts: [width, depth, height]. */
+export const draftSize = (dr) => (dr.parts.length ? box(dr.parts).map(([a, b]) => m3(b - a)) : [0, 0, 0]);
+
+/** A draft as a model item (checked), its box fitted around its parts. Null if it has no usable part. */
+export function fromDraft(dr, id = uid('my'), rev = 1) {
+  const parts = dr.parts.filter((p) => [0, 1, 2].every((k) => p.max[k] - p.min[k] > 0.0005));
+  if (!parts.length) return null;
+  const b = box(parts), size = b.map(([a, e]) => e - a);
+  const raw = {
+    id, rev, name: dr.name, size, z: (dr.z || 0) + b[2][0], light: dr.light ? { z: dr.light.z - b[2][0] } : undefined,
+    parts: parts.map((p) => [...[0, 1, 2].map((k) => (p.min[k] - b[k][0]) / size[k]), ...[0, 1, 2].map((k) => (p.max[k] - b[k][0]) / size[k]), p.color,
+      { shape: p.shape, radius: p.radius, opacity: p.opacity }]),
+  };
+  return cleanItem(raw);
+}
+
+/** A copy of part i, moved a little to the right so it can be seen. */
+export function duplicatePart(dr, i, dx = 0.05) {
+  const p = structuredClone(dr.parts[i]);
+  p.min[0] = m3(p.min[0] + dx); p.max[0] = m3(p.max[0] + dx);
+  dr.parts.push(p);
+  return dr.parts.length - 1;
+}
+/** A mirror copy of part i on the other side of the model (left ↔ right). */
+export function mirrorPart(dr, i) {
+  const [[x0, x1]] = box(dr.parts), p = structuredClone(dr.parts[i]), a = p.min[0], e = p.max[0];
+  p.min[0] = m3(x0 + x1 - e); p.max[0] = m3(x0 + x1 - a);
+  dr.parts.push(p);
+  return dr.parts.length - 1;
+}
+/** Four legs from the floor up to the underside of part i, at its corners. Returns how many were added. */
+export function legsUnder(dr, i, t = 0.05) {
+  const p = dr.parts[i], top = p.min[2];
+  if (top < 0.02) return 0;
+  const tx = Math.min(t, (p.max[0] - p.min[0]) / 3), ty = Math.min(t, (p.max[1] - p.min[1]) / 3);
+  for (const [x, y] of [[p.min[0], p.min[1]], [p.max[0] - tx, p.min[1]], [p.min[0], p.max[1] - ty], [p.max[0] - tx, p.max[1] - ty]]) {
+    dr.parts.push({ min: [m3(x), m3(y), 0], max: [m3(x + tx), m3(y + ty), m3(top)], color: p.color, ...(p.shape ? { shape: p.shape } : {}) });
+  }
+  return 4;
+}
+/** Resize the whole model along one axis (0 width, 1 depth, 2 height) to `size` metres. */
+export function scaleDraft(dr, axis, size) {
+  const [a, e] = box(dr.parts)[axis], k = size / ((e - a) || 1);
+  for (const p of dr.parts) { p.min[axis] = m3(a + (p.min[axis] - a) * k); p.max[axis] = m3(a + (p.max[axis] - a) * k); }
+  if (axis === 2 && dr.light) dr.light.z = m3(a + (dr.light.z - a) * k);
+}
