@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { partGeometry } from './shapes.js';
-import { h, nodes, icon, seg, numField, textField } from './ui.js';
+import { h, nodes, icon, seg, numField, textField, imperial, len as showLen } from './ui.js';
 import { MAX_DRAFT_PARTS, draftSize, fromDraft, duplicatePart, mirrorPart, legsUnder, scaleDraft, movePartAxis, resizePartFace } from './mymodels.js';
 
 const SHAPES = [['box', 'Box'], ['round', 'Rounded'], ['cylinder', 'Cylinder'], ['sphere', 'Sphere'], ['dome', 'Dome'], ['cone', 'Cone'], ['wedge', 'Wedge']];
@@ -16,17 +16,18 @@ const LIES = [['', 'Upright'], ['x', 'Left to right'], ['y', 'Front to back']];
 const SLOPES = [['front', 'Front'], ['back', 'Back'], ['left', 'Left'], ['right', 'Right']];
 /** A cone's two ends, named for the way it lies. */
 const coneEnds = (axis) => (axis === 'x' ? ['Right end', 'Left end'] : axis === 'y' ? ['Front end', 'Back end'] : ['Top', 'Bottom']);
-const toCm = (v) => Math.round(v * 1000) / 10;
-const toM = (v) => Math.round(v * 10) / 1000;
+const mm = (v) => Math.round(v * 1000) / 1000; // lengths are metres, kept to the millimetre
+/** What numbers snap to, in metres: centimetres, or inches on a device set to imperial (lengths show in its units too). */
+const STEPS = () => (imperial() ? [[0.0127, '½ in'], [0.0508, '2 in']] : [[0.01, '1 cm'], [0.05, '5 cm']]);
 
 /**
  * Open the maker. `draft`: what to start from. `onSave(item)` gets the finished model; `id`/`rev` keep a model's
  * identity when it is being changed. Leaving with unsaved changes asks first.
  */
 export function openModelMaker({ draft, id, rev = 1, title = 'Model maker', onSave }) {
-  let dr = structuredClone(draft), sel = dr.parts.length ? 0 : -1, step = 1, dirty = false;
+  let dr = structuredClone(draft), sel = dr.parts.length ? 0 : -1, step = STEPS()[0][0], dirty = false;
   const past = [], future = [];
-  const snapTo = (cmv) => Math.round(cmv / step) * step;
+  const snapTo = (v) => mm(Math.round(v / step) * step);
   /** Every change goes through here, so it can be undone. */
   const change = (fn, { refit = false } = {}) => {
     const before = JSON.stringify({ dr, sel });
@@ -45,7 +46,7 @@ export function openModelMaker({ draft, id, rev = 1, title = 'Model maker', onSa
   let dragFrom = null;
   const view = preview(viewHost, {
     pick: (i) => { sel = i; redraw(); },
-    snapping: () => ({ tol: step >= 5 ? 0.04 : 0.02, step: step / 100 }),
+    snapping: () => ({ tol: step >= 0.04 ? 0.04 : 0.02, step }),
     dragStart: () => { dragFrom = JSON.stringify({ dr, sel }); },
     drag: (fn) => { fn(dr, sel); view.update(dr, sel); },
     dragEnd: () => {
@@ -73,13 +74,13 @@ export function openModelMaker({ draft, id, rev = 1, title = 'Model maker', onSa
 
   function partFields(p) {
     const set = (fn) => change(() => fn(p));
-    const pos = (k, label) => numField(label, toCm(p.min[k]), (v) => set(() => { const w = p.max[k] - p.min[k]; p.min[k] = toM(snapTo(v)); p.max[k] = toM(toCm(p.min[k] + w)); }), { step, min: -1000, max: 5000, unit: 'cm' });
-    const len = (k, label) => numField(label, toCm(p.max[k] - p.min[k]), (v) => set(() => { p.max[k] = toM(toCm(p.min[k]) + Math.max(0.5, snapTo(v))); }), { step, min: 0.5, max: 5000, unit: 'cm' });
+    const pos = (k, label) => numField(label, p.min[k], (v) => set(() => { const w = p.max[k] - p.min[k]; p.min[k] = snapTo(v); p.max[k] = mm(p.min[k] + w); }), { step, min: -10, max: 50 });
+    const len = (k, label) => numField(label, mm(p.max[k] - p.min[k]), (v) => set(() => { p.max[k] = mm(p.min[k] + Math.max(0.005, snapTo(v))); }), { step, min: 0.005, max: 50 });
     const shape = shapeOf(p);
     return [
       h('div', { class: 'stack mm-shape' }, h('div', { class: 'row-label' }, 'Shape'), h('div', { class: 'seg wrap' }, SHAPES.map(([v, label]) => h('button', { class: v === shape ? 'on' : '', onclick: () => set(() => {
         for (const k of ['shape', 'radius', 'axis', 'top', 'bottom', 'slope']) delete p[k];
-        if (v === 'round') p.radius = toM(Math.max(1, Math.min(5, toCm(Math.min(...[0, 1, 2].map((k) => p.max[k] - p.min[k]))) / 4)));
+        if (v === 'round') p.radius = mm(Math.max(0.01, Math.min(0.05, Math.min(...[0, 1, 2].map((k) => p.max[k] - p.min[k])) / 4)));
         else if (v !== 'box') p.shape = v;
       }) }, label)))),
       shape === 'cylinder' || shape === 'cone' ? h('div', { class: 'row' }, h('div', { class: 'row-label' }, 'Lies'), seg(LIES, p.axis || '', (v) => set(() => { if (v) p.axis = v; else delete p.axis; }))) : null,
@@ -89,7 +90,7 @@ export function openModelMaker({ draft, id, rev = 1, title = 'Model maker', onSa
       shape === 'wedge' ? h('div', { class: 'row' }, h('div', { class: 'row-label' }, 'Slopes down to the'), seg(SLOPES, p.slope || 'front', (v) => set(() => { if (v === 'front') delete p.slope; else p.slope = v; }))) : null,
       h('div', { class: 'fields' }, pos(0, 'From the left'), pos(1, 'From the back'), pos(2, 'Off the floor'), len(0, 'Width'), len(1, 'Depth'), len(2, 'Height')),
       h('div', { class: 'fields' },
-        shape === 'round' ? numField('Rounding', toCm(p.radius), (v) => set(() => { p.radius = toM(Math.max(0.1, v)); }), { step: 0.5, min: 0.1, max: 100, unit: 'cm' }) : null,
+        shape === 'round' ? numField('Rounding', p.radius, (v) => set(() => { p.radius = mm(Math.max(0.001, v)); }), { step: 0.005, min: 0.001, max: 1 }) : null,
         numField('See-through', p.opacity == null ? 0 : Math.round((1 - p.opacity) * 100), (v) => set(() => { if (v <= 0) delete p.opacity; else p.opacity = Math.round(100 - Math.min(95, v)) / 100; }), { step: 5, min: 0, max: 95, unit: '%' }),
         h('label', { class: 'field' }, h('span', {}, 'Colour'), h('span', { class: 'colbtn' }, h('input', { type: 'color', value: p.color, 'aria-label': 'Colour of this part', onchange: (e) => set(() => { p.color = e.target.value; }) })))),
       h('div', { class: 'btns mm-tools' },
@@ -105,7 +106,7 @@ export function openModelMaker({ draft, id, rev = 1, title = 'Model maker', onSa
     const size = draftSize(dr), p = dr.parts[sel];
     const add = (shape) => change(() => {
       const [w, d] = size, s = 0.3;
-      dr.parts.push({ min: [toM(toCm(w / 2 - s / 2)), toM(toCm(Math.max(0, d / 2 - s / 2))), 0], max: [toM(toCm(w / 2 + s / 2)), toM(toCm(Math.max(0, d / 2 - s / 2) + s)), s], color: '#cfc8bd', ...(shape ? { shape } : {}) });
+      dr.parts.push({ min: [mm(w / 2 - s / 2), mm(Math.max(0, d / 2 - s / 2)), 0], max: [mm(w / 2 + s / 2), mm(Math.max(0, d / 2 - s / 2) + s), s], color: '#cfc8bd', ...(shape ? { shape } : {}) });
       sel = dr.parts.length - 1;
     });
     const full = dr.parts.length >= MAX_DRAFT_PARTS;
@@ -113,11 +114,11 @@ export function openModelMaker({ draft, id, rev = 1, title = 'Model maker', onSa
       textField('Name', dr.name, (v) => change(() => { dr.name = v || 'My model'; })),
       h('h3', {}, 'The whole model'),
       dr.parts.length ? h('div', { class: 'fields' },
-        ...['Width', 'Depth', 'Height'].map((label, k) => numField(label, toCm(size[k]), (v) => change(() => scaleDraft(dr, k, toM(Math.max(1, v))), { refit: true }), { step, min: 1, max: 5000, unit: 'cm' })),
-        numField('Placed at height', toCm(dr.z || 0), (v) => change(() => { dr.z = toM(v); }), { step, min: -500, max: 1000, unit: 'cm' })) : null,
-      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!dr.light, onchange: (e) => change(() => { dr.light = e.target.checked ? { z: toM(toCm(size[2] * 0.8)) } : null; }) }), 'It is a light (it can glow and be connected to a light)'),
-      dr.light ? numField('Bulb height in the model', toCm(dr.light.z), (v) => change(() => { dr.light.z = toM(v); }), { step, min: -500, max: 1000, unit: 'cm' }) : null,
-      h('div', { class: 'row' }, h('div', { class: 'row-label' }, 'Numbers snap to'), seg([[1, '1 cm'], [5, '5 cm']], step, (v) => { step = v; redraw(); })),
+        ...['Width', 'Depth', 'Height'].map((label, k) => numField(label, size[k], (v) => change(() => scaleDraft(dr, k, mm(Math.max(0.01, v))), { refit: true }), { step, min: 0.01, max: 50 })),
+        numField('Placed at height', dr.z || 0, (v) => change(() => { dr.z = mm(v); }), { step, min: -5, max: 10 })) : null,
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!dr.light, onchange: (e) => change(() => { dr.light = e.target.checked ? { z: mm(size[2] * 0.8) } : null; }) }), 'It is a light (it can glow and be connected to a light)'),
+      dr.light ? numField('Bulb height in the model', dr.light.z, (v) => change(() => { dr.light.z = mm(v); }), { step, min: -5, max: 10 }) : null,
+      h('div', { class: 'row' }, h('div', { class: 'row-label' }, 'Numbers snap to'), seg(STEPS(), step, (v) => { step = v; redraw(); })),
       h('h3', {}, `Parts (${dr.parts.length}${full ? ', the most a model can have' : ''})`),
       h('div', { class: 'mm-parts' }, dr.parts.map((q, i) => h('button', { class: 'chip small' + (i === sel ? ' on' : ''), onclick: () => { sel = i; redraw(); } },
         h('span', { class: 'mm-swatch', style: `background:${q.color}` }), `${i + 1} · ${shapeName[shapeOf(q)]}`))),
@@ -249,7 +250,7 @@ function preview(host, hooks) {
   };
   let down = null, drag = null;
   const say = (text) => { readout.hidden = !text; readout.textContent = text || ''; };
-  const cm = (v) => `${Math.round(v * 1000) / 10} cm`;
+  const cm = (v) => (imperial() ? showLen(v) : `${Math.round(v * 1000) / 10} cm`); // the readout: centimetres, or feet and inches
   canvas.addEventListener('pointerdown', (e) => {
     down = { x: e.clientX, y: e.clientY };
     drag = null;
